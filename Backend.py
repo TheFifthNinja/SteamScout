@@ -20,16 +20,29 @@ import requests
 import websockets
 from websockets.server import serve
 
+def _log_handler():
+    """Use a file handler in AppData when running without a console (frozen/.pyw)."""
+    if sys.stdout is not None and hasattr(sys.stdout, "write"):
+        try:
+            sys.stdout.write("")
+            return logging.StreamHandler(sys.stdout)
+        except Exception:
+            pass
+    log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "SteamScout")
+    os.makedirs(log_dir, exist_ok=True)
+    return logging.FileHandler(os.path.join(log_dir, "backend.log"), encoding="utf-8")
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[_log_handler()]
 )
 log = logging.getLogger(__name__)
 
 CEF_DEBUG_URL = "http://localhost:8080/json"
 WS_HOST       = "localhost"
 WS_PORT       = 8765
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1.  PC SPEC DETECTION
@@ -358,6 +371,45 @@ def _required_score(req: str, kind: str) -> Optional[float]:
     return min(vals)
 
 
+def _fallback_component_eval(kind: str, pc: dict, required_text: str) -> Optional[dict]:
+    req = (required_text or "").lower()
+    cpu = (pc.get("cpu") or "").lower()
+    gpu = (pc.get("gpu") or "").lower()
+
+    if kind == "cpu":
+        modern_cpu_markers = [
+            "core i3", "core i5", "core i7", "core i9", "ryzen", "threadripper", "xeon", "pentium gold", "pentium g",
+        ]
+
+        if "sse3" in req:
+            if any(m in cpu for m in modern_cpu_markers):
+                return {"status": "pass", "reason": "Modern CPU family likely supports SSE3.", "source": "heuristic"}
+            if "pentium 4" in cpu:
+                return {"status": "pass", "reason": "Pentium 4 baseline matched; SSE3 treated as supported.", "source": "heuristic"}
+            if "athlon xp" in cpu or "pentium iii" in cpu:
+                return {"status": "fail", "reason": "Detected very old CPU family likely below SSE3 baseline.", "source": "heuristic"}
+            return {"status": "warn", "reason": "Cannot verify SSE3 capability from CPU name alone.", "source": "heuristic"}
+
+        if "pentium 4" in req and ("or later" in req or "or better" in req):
+            if any(m in cpu for m in modern_cpu_markers) or "pentium 4" in cpu:
+                return {"status": "pass", "reason": "CPU appears newer than Pentium 4 baseline.", "source": "heuristic"}
+            return {"status": "warn", "reason": "Could not map CPU to Pentium 4-or-later baseline.", "source": "heuristic"}
+
+    if kind == "gpu":
+        if "hardware accelerated" in req and "dedicated memory" in req:
+            if "microsoft basic display" in gpu or "unknown" in gpu:
+                return {"status": "warn", "reason": "GPU model is unclear for hardware acceleration check.", "source": "heuristic"}
+            vram = pc.get("vram_gb", 0.0) or 0.0
+            status = "pass" if vram >= 1.0 else "warn"
+            return {
+                "status": status,
+                "reason": "Dedicated GPU memory heuristic used for non-specific graphics requirement.",
+                "source": "heuristic",
+            }
+
+    return None
+
+
 def estimate_performance(compat: dict) -> dict:
     min_ok = compat.get("overall_min")
     rec_ok = compat.get("overall_rec")
@@ -596,13 +648,22 @@ def check_compatibility(pc: dict, reqs: dict) -> dict:
                 req_score = _required_score(r[key], key)
                 if yours is not None and req_score is not None:
                     status = "pass" if yours >= req_score else "fail"
+                    note = ""
                 else:
-                    status = "warn"
+                    resolved = _fallback_component_eval(key, pc, r[key])
+                    if resolved:
+                        status = resolved.get("status", "warn")
+                        note = resolved.get("reason", "")
+                    else:
+                        status = "warn"
+                        note = "Could not confidently parse this requirement text."
                 t[key] = {
                     "status": status,
                     "yours": label,
                     "required": r[key],
                 }
+                if note:
+                    t[key]["note"] = note
 
         if "directx" in r:
             req_dx = _directx_major(r["directx"])

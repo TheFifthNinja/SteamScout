@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -22,7 +23,14 @@ import winreg
 import subprocess
 
 WS_URL = "ws://localhost:8765"
-SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "overlay_settings.json")
+
+def _data_dir():
+    """Return %APPDATA%/SteamScout for user data (settings, etc.)."""
+    d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "SteamScout")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+SETTINGS_PATH = os.path.join(_data_dir(), "overlay_settings.json")
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
 BG       = "#0f0f13"
@@ -435,8 +443,9 @@ class CustomSlider(tk.Canvas):
 
 
 class Overlay:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, close_callback=None):
         self.root = root
+        self._close_callback = close_callback or root.destroy
         self.settings = _load_settings()
         self._apply_theme_globals()
         self._font_family = "Bahnschrift"
@@ -453,6 +462,7 @@ class Overlay:
         self._settings_edge_handles = {}
         self._settings_root_topmost_prev = None
         self._deal_cache = {}
+        self._requirements_tab = "minimum"
         self._setup_window()
         self._build_chrome()
         self._drag_x = self._drag_y = 0
@@ -637,7 +647,7 @@ class Overlay:
         self._close = tk.Label(bar, text="  ✕  ", bg=BG, fg=DIM,
                                 font=self._font(11), cursor="hand2")
         self._close.pack(side=tk.RIGHT)
-        self._close.bind("<Button-1>", lambda _: self.root.destroy())
+        self._close.bind("<Button-1>", lambda _: self._close_callback())
         self._close.bind("<Enter>",    lambda _: self._close.config(fg=RED))
         self._close.bind("<Leave>",    lambda _: self._close.config(fg=DIM))
 
@@ -847,44 +857,75 @@ class Overlay:
         # Divider
         tk.Frame(self._content, bg=BORDER, height=1).pack(fill=tk.X, pady=(0, 5))
 
-        # Spec rows — prefer minimum, fall back to recommended
-        ORDER = ["ram", "os", "cpu", "gpu", "directx", "storage"]
-        min_d = compat.get("minimum", {})
-        rec_d = compat.get("recommended", {})
-        shown_rows = []
+        tabs = tk.Frame(self._content, bg=BG)
+        tabs.pack(fill=tk.X, pady=(0, 6))
 
-        for key in ORDER:
-            row_data = min_d.get(key) or rec_d.get(key)
-            if not row_data:
-                continue
-            label = key.upper() if key in ("cpu", "gpu", "os", "ram") else key.capitalize()
-            shown_rows.append((key, row_data))
-            self._spec_row(key, label, row_data)
+        min_btn = tk.Label(tabs, text="MINIMUM", bg=SURFACE2, fg=TEXT,
+                           font=self._font(9, "bold"), padx=10, pady=4, cursor="hand2")
+        rec_btn = tk.Label(tabs, text="RECOMMENDED", bg=SURFACE2, fg=TEXT,
+                           font=self._font(9, "bold"), padx=10, pady=4, cursor="hand2")
+        min_btn.pack(side=tk.LEFT, padx=(0, 6))
+        rec_btn.pack(side=tk.LEFT)
 
-        self._prefetch_upgrade_deals(shown_rows)
-        perf = compat.get("performance") or self._fallback_performance(compat)
-        self._performance_block(perf)
-        self._build_summary_and_upgrades(shown_rows)
+        details = tk.Frame(self._content, bg=BG)
+        details.pack(fill=tk.X)
+
+        if self._requirements_tab not in {"minimum", "recommended"}:
+            self._requirements_tab = "minimum"
+
+        def _render_tab(tab_name: str):
+            self._requirements_tab = tab_name
+            if tab_name == "minimum":
+                min_btn.config(bg=STEAM, fg=BRIGHT)
+                rec_btn.config(bg=SURFACE2, fg=TEXT)
+            else:
+                rec_btn.config(bg=STEAM, fg=BRIGHT)
+                min_btn.config(bg=SURFACE2, fg=TEXT)
+
+            for w in details.winfo_children():
+                w.destroy()
+
+            ORDER = ["ram", "os", "cpu", "gpu", "directx", "storage"]
+            tier_data = compat.get(tab_name, {})
+            shown_rows = []
+
+            for key in ORDER:
+                row_data = tier_data.get(key)
+                if not row_data:
+                    continue
+                label = key.upper() if key in ("cpu", "gpu", "os", "ram") else key.capitalize()
+                shown_rows.append((key, row_data))
+                self._spec_row(details, key, label, row_data, tab_name)
+
+            self._prefetch_upgrade_deals(shown_rows)
+            perf = compat.get("performance") or self._fallback_performance(compat)
+            self._performance_block(perf, parent=details)
+            self._build_summary_and_upgrades(shown_rows, tab_name, parent=details)
+
+        min_btn.bind("<Button-1>", lambda _: _render_tab("minimum"))
+        rec_btn.bind("<Button-1>", lambda _: _render_tab("recommended"))
+        _render_tab(self._requirements_tab)
 
         self._resize()
 
-    def _spec_row(self, key: str, label: str, data: dict):
-        status = data.get("status", "info")
+    def _spec_row(self, parent, key: str, label: str, data: dict, tier_name: str):
+        status = (data or {}).get("status", "unknown")
         color, bg, icon = STATUS.get(status, STATUS["info"])
 
-        row = tk.Frame(self._content, bg=bg, padx=8, pady=6)
+        row = tk.Frame(parent, bg=bg, padx=8, pady=6)
         row.pack(fill=tk.X, pady=3)
 
         head = tk.Frame(row, bg=bg)
         head.pack(fill=tk.X)
         tk.Label(head, text=f"{icon}  {label}", bg=bg, fg=color,
                  font=self._font(11, "bold"), anchor="w").pack(side=tk.LEFT)
-        tk.Label(head, text=STATUS_TEXT.get(status, "INFO"), bg=bg, fg=color,
+        tier_text = "MINIMUM" if tier_name == "minimum" else "RECOMMENDED"
+        tk.Label(head, text=f"{tier_text}  {STATUS_TEXT.get(status, 'UNKNOWN')}", bg=bg, fg=color,
                  font=self._font(9, "bold"), anchor="e").pack(side=tk.RIGHT)
 
         wrap = max(280, self._win_w - 80)
-        yours = data.get("yours", "—")
-        req = data.get("required", "")
+        yours = (data or {}).get("yours", "—")
+        req = (data or {}).get("required", "")
 
         tk.Label(
             row,
@@ -909,16 +950,18 @@ class Overlay:
                 wraplength=wrap,
             ).pack(fill=tk.X, pady=(2, 0))
 
-    def _build_summary_and_upgrades(self, shown_rows):
+    def _build_summary_and_upgrades(self, shown_rows, tier_name: str, parent=None):
+        target = parent or self._content
         measurable = {"ram", "os", "storage"}
         auto_rows = [(k, d) for (k, d) in shown_rows if k in measurable and d.get("status") in ("pass", "fail")]
         met = sum(1 for _, d in auto_rows if d.get("status") == "pass")
         total = len(auto_rows)
 
         if total:
+            tier_label = "Minimum" if tier_name == "minimum" else "Recommended"
             summary = tk.Label(
-                self._content,
-                text=f"Auto-checked requirements met: {met}/{total}",
+                target,
+                text=f"{tier_label} auto-checked requirements met: {met}/{total}",
                 bg=BG,
                 fg=DIM,
                 font=self._font(10),
@@ -930,28 +973,28 @@ class Overlay:
         for key, data in shown_rows:
             status = data.get("status", "unknown")
             if key in {"ram", "cpu", "gpu", "storage"} and status == "fail":
-                upgrade_rows.append((key, data.get("required", ""), status))
+                reason = "Below minimum" if tier_name == "minimum" else "Below recommended"
+                upgrade_rows.append((key, data.get("required", ""), reason))
 
         if not upgrade_rows:
             return
 
-        tk.Frame(self._content, bg=BORDER, height=1).pack(fill=tk.X, pady=(6, 5))
-        tk.Label(self._content, text="Upgrade Options", bg=BG, fg=STEAM,
+        tk.Frame(target, bg=BORDER, height=1).pack(fill=tk.X, pady=(6, 5))
+        tk.Label(target, text="Upgrade Options", bg=BG, fg=STEAM,
                  font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-        tk.Label(self._content, text="Click a suggestion to find compatible parts.", bg=BG, fg=DIM,
+        tk.Label(target, text="Click a suggestion to find compatible parts.", bg=BG, fg=DIM,
                  font=self._font(9), anchor="w").pack(fill=tk.X)
 
-        for key, required, status in upgrade_rows:
+        for key, required, reason in upgrade_rows:
             part = self._part_name(key)
             need = required or "See game requirement"
-            reason = "Below requirement" if status == "fail" else "Needs manual comparison"
             query = self._upgrade_query(key, required)
             deal = self._deal_cache.get(query, {})
             fallback_url = _ebay_search_url(query)
             open_url = deal.get("url") or fallback_url
 
             tk.Label(
-                self._content,
+                target,
                 text=f"{part}: {reason} (target: {need})",
                 bg=BG,
                 fg=TEXT,
@@ -967,7 +1010,7 @@ class Overlay:
                 btn_text = "Find Cheapest Online"
 
             tk.Button(
-                self._content,
+                target,
                 text=btn_text,
                 command=lambda link=open_url: webbrowser.open(link),
                 bg=SURFACE2,
@@ -986,7 +1029,7 @@ class Overlay:
                 if len(title) > 54:
                     title = title[:53] + "..."
                 tk.Label(
-                    self._content,
+                    target,
                     text=f"{deal.get('store', 'Store')}: {title}",
                     bg=BG,
                     fg=DIM,
@@ -994,29 +1037,30 @@ class Overlay:
                     anchor="w",
                 ).pack(fill=tk.X)
 
-    def _performance_block(self, perf: dict):
+    def _performance_block(self, perf: dict, parent=None):
         if not perf:
             return
+        target = parent or self._content
 
-        tk.Frame(self._content, bg=BORDER, height=1).pack(fill=tk.X, pady=(8, 5))
-        tk.Label(self._content, text="Estimated Performance", bg=BG, fg=STEAM,
+        tk.Frame(target, bg=BORDER, height=1).pack(fill=tk.X, pady=(8, 5))
+        tk.Label(target, text="Estimated Performance", bg=BG, fg=STEAM,
                  font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
 
         model = perf.get("model", "Heuristic")
         score = perf.get("score")
         if score is not None:
-            tk.Label(self._content, text=f"Model: {model}  |  Score: {score}", bg=BG, fg=DIM,
+            tk.Label(target, text=f"Model: {model}  |  Score: {score}", bg=BG, fg=DIM,
                      font=self._font(9), anchor="w").pack(fill=tk.X)
         else:
-            tk.Label(self._content, text=f"Model: {model}", bg=BG, fg=DIM,
+            tk.Label(target, text=f"Model: {model}", bg=BG, fg=DIM,
                      font=self._font(9), anchor="w").pack(fill=tk.X)
 
         conf = perf.get("confidence", "low").upper()
         note = perf.get("note", "")
-        tk.Label(self._content, text=f"Confidence: {conf}", bg=BG, fg=DIM,
+        tk.Label(target, text=f"Confidence: {conf}", bg=BG, fg=DIM,
                  font=self._font(9), anchor="w").pack(fill=tk.X)
         if note:
-            tk.Label(self._content, text=note, bg=BG, fg=TEXT,
+            tk.Label(target, text=note, bg=BG, fg=TEXT,
                      font=self._font(9), anchor="w", justify="left", wraplength=max(320, self._win_w - 80)).pack(fill=tk.X, pady=(1, 3))
 
         presets = perf.get("presets", {})
@@ -1025,7 +1069,7 @@ class Overlay:
             if not fps:
                 continue
             tk.Label(
-                self._content,
+                target,
                 text=f"{level.capitalize()} settings: {fps}",
                 bg=BG,
                 fg=BRIGHT,
@@ -1107,68 +1151,123 @@ class Overlay:
             "storage": "Storage",
         }.get(key, key.upper())
 
+    def _is_vague_requirement(self, key: str, required: str) -> bool:
+        s = (required or "").strip().lower()
+        if not s:
+            return True
+
+        # Requirement text that is not a concrete purchasable model/capacity.
+        vague_markers = [
+            "hardware accelerated",
+            "dedicated memory",
+            "compatible",
+            "or better",
+            "equivalent",
+            "support",
+            "shader",
+            "feature level",
+            "dx",
+            "directx",
+            "intel hd",
+            "integrated graphics",
+            "see notes",
+            "tbd",
+            "unknown",
+        ]
+        if any(m in s for m in vague_markers):
+            return True
+
+        if key in {"ram", "storage"} and not re.search(r"\b\d+(?:\.\d+)?\s*(tb|gb|mb)\b", s, re.IGNORECASE):
+            return True
+
+        return False
+
+    def _extract_size_gb(self, text: str):
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(tb|gb|mb)\b", text or "", re.IGNORECASE)
+        if not m:
+            return None
+        value = float(m.group(1))
+        unit = m.group(2).lower()
+        if unit == "tb":
+            return int(round(value * 1024))
+        if unit == "mb":
+            return max(1, int(round(value / 1024)))
+        return int(round(value))
+
     def _upgrade_query(self, key: str, required: str) -> str:
-        required = (required or "").strip()
+        required = re.sub(r"\s+", " ", (required or "").strip())
         mode = self.settings.get("upgrade_query_mode", "specific")
+        vague = self._is_vague_requirement(key, required)
+
         if key == "ram":
             if mode == "general":
                 return "gaming PC RAM upgrade"
-            return f"buy {required or '16GB DDR4 RAM'} for PC"
+            size_gb = self._extract_size_gb(required)
+            if size_gb:
+                return f"buy {size_gb}GB desktop RAM DDR4 or DDR5"
+            if vague:
+                return "desktop gaming RAM upgrade kit"
+            return f"buy {required} desktop RAM"
+
         if key == "storage":
             if mode == "general":
                 return "gaming PC SSD storage upgrade"
-            return f"buy {required or '1TB SSD'} for PC"
+            size_gb = self._extract_size_gb(required)
+            drive_kind = "SSD" if "ssd" in required.lower() or "nvme" in required.lower() else "drive"
+            if size_gb:
+                return f"buy {size_gb}GB {drive_kind} for PC"
+            if vague:
+                return "gaming PC SSD storage upgrade"
+            return f"buy {required} PC storage"
+
         if key == "cpu":
             if mode == "general":
                 return "gaming PC CPU upgrade"
+            if vague:
+                return "gaming PC CPU upgrade"
             return f"buy PC CPU similar or better than {required}"
+
         if key == "gpu":
             if mode == "general":
                 return "gaming PC graphics card upgrade"
+            if vague:
+                return "gaming PC dedicated graphics card upgrade"
             return f"buy graphics card similar or better than {required}"
+
         return f"buy PC part upgrade {required}"
 
     def _toggle_auto_launch(self, enable: bool):
-        """Add or remove the auto-launch monitor from Windows Run registry."""
-        import sys
+        """Add or remove SteamScout from Windows startup (registry)."""
         try:
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            reg_key = "SteamScout"
-            
-            # Point to the batch launcher script
-            monitor_batch = os.path.join(os.path.dirname(__file__), "launch_monitor.bat")
-            if not os.path.exists(monitor_batch):
-                print(f"[DEBUG] Monitor batch not found: {monitor_batch}", file=sys.stderr)
-                return False
-            
-            monitor_batch = os.path.abspath(monitor_batch)
-            print(f"[DEBUG] Monitor batch found: {monitor_batch}", file=sys.stderr)
-            
-            try:
-                reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
-                key = winreg.OpenKey(reg, key_path, 0, winreg.KEY_SET_VALUE)
-                
-                if enable:
-                    # Run batch file minimized at startup
-                    cmd = f'cmd /c start /min "{monitor_batch}"'
-                    print(f"[DEBUG] Setting registry: {cmd}", file=sys.stderr)
-                    winreg.SetValueEx(key, reg_key, 0, winreg.REG_SZ, cmd)
-                    print(f"[DEBUG] Registry set successfully", file=sys.stderr)
+            reg_name = "SteamScout"
+
+            reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            key = winreg.OpenKey(reg, key_path, 0, winreg.KEY_SET_VALUE)
+
+            if enable:
+                if getattr(sys, 'frozen', False):
+                    cmd = f'"{sys.executable}"'
                 else:
-                    try:
-                        print(f"[DEBUG] Deleting registry key: {reg_key}", file=sys.stderr)
-                        winreg.DeleteValue(key, reg_key)
-                        print(f"[DEBUG] Registry key deleted successfully", file=sys.stderr)
-                    except FileNotFoundError:
-                        print(f"[DEBUG] Registry key not found (expected on first disable)", file=sys.stderr)
-                
-                winreg.CloseKey(key)
-                return True
-            except Exception as e:
-                print(f"[DEBUG] Registry operation failed: {e}", file=sys.stderr)
-                return False
-        except Exception as e:
-            print(f"[DEBUG] Auto-launch toggle error: {e}", file=sys.stderr)
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    main_script = os.path.join(script_dir, "SteamScout.pyw")
+                    if not os.path.exists(main_script):
+                        winreg.CloseKey(key)
+                        return False
+                    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                    if not os.path.exists(pythonw):
+                        pythonw = sys.executable
+                    cmd = f'"{pythonw}" "{main_script}"'
+                winreg.SetValueEx(key, reg_name, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, reg_name)
+                except FileNotFoundError:
+                    pass
+
+            winreg.CloseKey(key)
+            return True
+        except Exception:
             return False
 
     def open_settings(self):
