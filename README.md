@@ -39,25 +39,17 @@ When Steam closes, it hides back to the tray.
 
 ## Installation
 
-### Option 1 — Installer (recommended)
+### Option 1 — Download (recommended)
 
-1. Download **SteamScoutSetup.exe** from the releases page
-2. Run the installer
+1. Download **SteamScout.exe** from the [releases page](../../releases/latest)
+2. Place it anywhere and double-click to run
 3. SteamScout starts in the system tray — done!
 
-### Option 2 — Portable EXE
-
-1. Download **SteamScout.exe**
-2. Place it anywhere and double-click to run
-
-### Option 3 — From source (developers)
+### Option 2 — From source (developers)
 
 1. Install **Python 3.9+** from https://python.org (tick "Add Python to PATH")
 2. `pip install -r Requirements.txt`
 3. `python SteamScout.pyw`
-
-You can also run `python Overlay.py` and `python Backend.py` separately
-for development.
 
 ---
 
@@ -129,9 +121,6 @@ python build.py
 
 The output is `dist/SteamScout.exe` — a single portable executable.
 
-To create a Windows installer, install
-[Inno Setup](https://jrsoftware.org/isinfo.php) and compile `installer.iss`.
-
 ---
 
 ## Status icons
@@ -201,9 +190,7 @@ SteamScout/
 ├── Overlay.py         — Floating pywebview overlay (Edge WebView2 / Chromium)
 ├── overlay_ui.html    — Overlay front-end (HTML / CSS / JS)
 ├── SteamScoutIcon.png — Application icon (PNG)
-├── steamscout.ico     — Application icon (ICO, multi-size)
 ├── build.py           — PyInstaller build script
-├── installer.iss      — Inno Setup installer script
 ├── Requirements.txt   — Python packages
 ├── tests/
 │   └── test_backend.py — 113 unit tests for the backend engine
