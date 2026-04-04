@@ -321,9 +321,13 @@ def _size_gb(s: str, default_unit: str = "GB") -> Optional[float]:
 
 
 def _directx_major(s: str) -> Optional[int]:
-    m = re.search(r"directx\s*(\d+)|dx\s*(\d+)|version\s*(\d+)", s, re.IGNORECASE)
+    m = re.search(r"directx\s*(\d+)|dx\s*(\d+)|version\s*(\d+)|direct3d\s*(\d+)", s, re.IGNORECASE)
     if not m:
-        return None
+        # Bare number like "12" in a field that should be DX version
+        m = re.match(r"^\s*(\d{1,2})\s*$", s.strip())
+        if not m:
+            return None
+        return int(m.group(1))
     for g in m.groups():
         if g:
             return int(g)
@@ -639,7 +643,10 @@ def _gpu_score(name: str) -> Optional[float]:
         bonus += 600.0
     if " xt" in s or s.endswith("xt"):
         bonus += 600.0
+    if " xtx" in s or s.endswith("xtx"):
+        bonus += 400.0  # additional on top of xt
 
+    # NVIDIA GeForce RTX / GTX / GT / MX
     n = re.search(r"(rtx|gtx|gt|mx)\s*(\d{3,4})", s)
     if n:
         fam = {"gt": 500, "mx": 1500, "gtx": 4000, "rtx": 12000}.get(n.group(1), 0)
@@ -648,15 +655,53 @@ def _gpu_score(name: str) -> Optional[float]:
         _gpu_score_cache[name] = result
         return result
 
+    # AMD Radeon RX
     a = re.search(r"\brx\s*(\d{3,4})", s)
     if a:
         result = 3000 + int(a.group(1)) * 4.0 + bonus
         _gpu_score_cache[name] = result
         return result
 
+    # AMD Radeon R5/R7/R9 (older GCN)
+    rad = re.search(r"\br([579])\s*(\d{3})", s)
+    if rad:
+        tier = int(rad.group(1))
+        model = int(rad.group(2))
+        result = tier * 400 + model * 3.0 + bonus
+        _gpu_score_cache[name] = result
+        return result
+
+    # AMD Radeon HD (very old)
+    hd = re.search(r"\bhd\s*(\d{4})", s)
+    if hd:
+        result = 800 + int(hd.group(1)) * 0.5 + bonus
+        _gpu_score_cache[name] = result
+        return result
+
+    # Intel Arc
     arc = re.search(r"\barc\s*a?\s*(\d{3,4})", s)
     if arc:
         result = 3500 + int(arc.group(1)) * 4.0 + bonus
+        _gpu_score_cache[name] = result
+        return result
+
+    # Intel UHD / HD / Iris (integrated)
+    igpu = re.search(r"\b(?:uhd|hd|iris(?:\s*(?:pro|plus|xe))?)\s*(\d{3,4})?\b", s)
+    if igpu:
+        model = int(igpu.group(1)) if igpu.group(1) else 600
+        base = 800 if "iris" in s else 400
+        result = base + model * 0.8
+        _gpu_score_cache[name] = result
+        return result
+
+    # NVIDIA Quadro (workstation)
+    quadro = re.search(r"\bquadro\s*(?:rtx\s*)?(\w*\d{3,4})", s)
+    if quadro:
+        model_str = quadro.group(1)
+        digits = re.search(r"(\d+)", model_str)
+        model_num = int(digits.group(1)) if digits else 2000
+        base = 10000 if "rtx" in s else 4000
+        result = base + model_num * 2.0 + bonus
         _gpu_score_cache[name] = result
         return result
 
@@ -676,23 +721,76 @@ def _cpu_score(name: str) -> Optional[float]:
     # Regex fallback
     s = (name or "").lower()
 
+    # Intel Core iN-XXXXX (covers 2nd through 14th+ gen)
     i = re.search(r"\bi([3579])[-\s]?(\d{4,5})", s)
     if i:
         tier = int(i.group(1))
         model = i.group(2)
         gen = int(model[:2]) if len(model) == 5 else int(model[0])
         sku = int(model[-2:])
-        result = tier * 1000 + gen * 350 + sku * 2.0
+        k_bonus = 500 if re.search(r"\d[kf]", s) else 0
+        result = tier * 1000 + gen * 350 + sku * 2.0 + k_bonus
         _cpu_score_cache[name] = result
         return result
 
+    # Intel Core Ultra (e.g. "Core Ultra 7 155H")
+    ultra = re.search(r"(?:core\s*)?ultra\s*([579])\s*(\d{3})", s)
+    if ultra:
+        tier = int(ultra.group(1))
+        model = int(ultra.group(2))
+        result = tier * 1200 + model * 40
+        _cpu_score_cache[name] = result
+        return result
+
+    # AMD Ryzen N XXXX (covers 1000 through 9000 series)
     ry = re.search(r"ryzen\s*([3579])\s*(\d{4,5})", s)
     if ry:
         tier = int(ry.group(1))
         model = ry.group(2)
         gen = int(model[0])
         sku = int(model[-2:])
-        result = tier * 1000 + gen * 400 + sku * 2.0
+        x_bonus = 500 if "x" in s.split(model)[-1][:3] else 0
+        x3d_bonus = 1500 if "x3d" in s else 0
+        result = tier * 1000 + gen * 400 + sku * 2.0 + x_bonus + x3d_bonus
+        _cpu_score_cache[name] = result
+        return result
+
+    # AMD FX series
+    fx = re.search(r"\bfx[-\s]?(\d{4})", s)
+    if fx:
+        result = 2000 + int(fx.group(1)) * 0.5
+        _cpu_score_cache[name] = result
+        return result
+
+    # AMD Athlon / Phenom
+    ath = re.search(r"\b(?:athlon|phenom)\b.*?(\d{3,4})", s)
+    if ath:
+        result = 1500 + int(ath.group(1)) * 1.5
+        _cpu_score_cache[name] = result
+        return result
+
+    # Intel Pentium / Celeron
+    pen = re.search(r"\b(?:pentium|celeron)\s*(?:g|j|n)?(\d{3,5})", s)
+    if pen:
+        result = 2000 + int(pen.group(1)) * 0.6
+        _cpu_score_cache[name] = result
+        return result
+
+    # Intel Xeon (workstation/server)
+    xeon = re.search(r"\bxeon\b.*?(?:e[357]|w)[-\s]?(\d{4,5})", s)
+    if xeon:
+        model = int(xeon.group(1))
+        result = 5000 + model * 1.2
+        _cpu_score_cache[name] = result
+        return result
+
+    # Very generic fallback: "X GHz" with core count
+    ghz = re.search(r"(\d+(?:\.\d+)?)\s*ghz", s)
+    cores = re.search(r"(\d+)[-\s]*cores?", s)
+    if ghz:
+        freq = float(ghz.group(1))
+        n_cores = int(cores.group(1)) if cores else 4
+        result = freq * 1800 + n_cores * 600
         _cpu_score_cache[name] = result
         return result
 
@@ -708,10 +806,17 @@ def _required_score(req: str, kind: str) -> Optional[float]:
         p = p.strip()
         if not p:
             continue
+        # Strip common suffixes that confuse scoring
+        p = re.sub(r"\s*\(.*?\)\s*$", "", p)  # "(or equivalent)"
+        p = re.sub(r"\s*(?:or\s+)?(?:equivalent|better|higher|above|comparable|newer)\s*$", "", p, flags=re.IGNORECASE)
         val = _gpu_score(p) if kind == "gpu" else _cpu_score(p)
         if val is not None:
             vals.append(val)
     if not vals:
+        # Last resort: try scoring the entire string as-is
+        val = _gpu_score(req) if kind == "gpu" else _cpu_score(req)
+        if val is not None:
+            return val
         return None
     # Requirement alternatives are equivalent-ish; minimum threshold is enough.
     return min(vals)
@@ -863,11 +968,13 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
     pc_ram  = pc.get("ram_gb")
     pc_vram = pc.get("vram_gb")
     pc_dx   = _directx_major(pc.get("directx", ""))
+    pc_storage = pc.get("free_disk_gb")
 
     min_cpu = _required_score(min_r.get("cpu", ""), "cpu") if "cpu" in min_r else None
     min_gpu = _required_score(min_r.get("gpu", ""), "gpu") if "gpu" in min_r else None
     min_ram = _size_gb(min_r.get("ram", ""), default_unit="GB") if "ram" in min_r else None
     min_dx  = _directx_major(min_r.get("directx", "")) if "directx" in min_r else None
+    min_storage = _size_gb(min_r.get("storage", ""), default_unit="GB") if "storage" in min_r else None
 
     rec_cpu = _required_score(rec_r.get("cpu", ""), "cpu") if "cpu" in rec_r else None
     rec_gpu = _required_score(rec_r.get("gpu", ""), "gpu") if "gpu" in rec_r else None
@@ -875,17 +982,24 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
 
     # ── Weighted feature ratios (GPU‑dominant like real games) ──
     feature_weights = {
-        "gpu":     0.45,
-        "cpu":     0.30,
-        "ram":     0.12,
-        "vram":    0.08,
-        "directx": 0.05,
+        "gpu":      0.42,
+        "cpu":      0.28,
+        "ram":      0.12,
+        "vram":     0.08,
+        "directx":  0.05,
+        "storage":  0.05,
     }
 
     feature_ratios: dict[str, Optional[float]] = {}
     feature_ratios["gpu"] = _ratio(pc_gpu, min_gpu)
     feature_ratios["cpu"] = _ratio(pc_cpu, min_cpu)
     feature_ratios["ram"] = _ratio(pc_ram, min_ram)
+
+    # Storage: binary pass/fail with a small boost for extra headroom
+    if pc_storage is not None and min_storage is not None and min_storage > 0:
+        feature_ratios["storage"] = min(_ratio(pc_storage, min_storage) or 0.0, 1.5)
+    else:
+        feature_ratios["storage"] = None
 
     # DirectX: binary pass/fail with a small boost for exceeding
     if min_dx is not None and pc_dx is not None:
@@ -987,10 +1101,10 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
     has_rec = bool(rec_ratios)
     if parsed_features >= 4 and has_rec:
         confidence = "high"
-    elif parsed_features >= 3 and has_rec:
-        confidence = "medium"
     elif parsed_features >= 3:
-        confidence = "medium"  # min-only but enough components
+        confidence = "medium"
+    elif parsed_features >= 2 and has_rec:
+        confidence = "medium"
     else:
         confidence = "low"
 
