@@ -14,6 +14,7 @@ import sys
 BUILD_DIR = os.path.dirname(os.path.abspath(__file__))
 ICON_PNG = os.path.join(BUILD_DIR, "SteamScoutIcon.png")
 ICON_ICO = os.path.join(BUILD_DIR, "steamscout.ico")
+UI_HTML  = os.path.join(BUILD_DIR, "overlay_ui.html")
 
 
 def generate_ico():
@@ -55,9 +56,20 @@ def build():
             "--noupx",
             f"--icon={ICON_ICO}",
             f"--add-data={ICON_PNG};.",
+            f"--add-data={UI_HTML};.",
             "--clean",
             "--noconfirm",
+            # Runtime-imported modules PyInstaller can't auto-detect
+            "--hidden-import=Backend",
+            "--hidden-import=Overlay",
             "--hidden-import=pystray._win32",
+            "--hidden-import=webview",
+            # Ensure pywebview's platform-specific backends are included
+            "--hidden-import=webview.platforms.winforms",
+            "--hidden-import=webview.platforms.edgechromium",
+            "--hidden-import=clr_loader",
+            "--hidden-import=pythonnet",
+            "--collect-all=webview",
         ]
     )
 

@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SteamScout</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────────── */
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #0f0f13; --surface: #1a1a22; --surface2: #22222e; --border: #2a2a38;
+  --text: #e0e0f0; --dim: #6060a0; --bright: #ffffff; --steam: #1b9cff;
+  --font-family: 'Bahnschrift', 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  --font-scale: 1;
+  --green: #4ade80; --green-bg: #0b1f14;
+  --yellow: #fbbf24; --yellow-bg: #1e1500;
+  --red: #f87171; --red-bg: #1e0b0b;
+  --blue: #60a5fa; --blue-bg: #0b1322;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+  --glow-steam: 0 0 12px rgba(27,156,255,0.15);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: calc(14px * var(--font-scale));
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+#app {
+  display: flex; flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(255,255,255,0.03) inset;
+}
+
+/* ── Title bar ────────────────────────────────────────────────────────── */
+#titlebar {
+  display: flex; align-items: center;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  cursor: grab;
+  flex-shrink: 0;
+  position: relative;
+}
+#titlebar::after {
+  content: '';
+  position: absolute; bottom: 0; left: 14px; right: 14px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--steam), transparent);
+  opacity: 0.25;
+}
+#titlebar:active { cursor: grabbing; }
+#titlebar .logo {
+  color: var(--steam); font-weight: 700;
+  font-size: calc(13px * var(--font-scale));
+  letter-spacing: 1.2px;
+  text-shadow: 0 0 16px rgba(27,156,255,0.3);
+}
+#titlebar .spacer { flex: 1; }
+.bar-btn {
+  cursor: pointer; padding: 4px 8px; color: var(--dim);
+  font-size: calc(13px * var(--font-scale));
+  transition: color 0.2s, transform 0.15s, text-shadow 0.2s, background 0.2s;
+  background: none; border: none; font-family: inherit;
+  border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+}
+.bar-btn:hover { color: var(--steam); text-shadow: 0 0 8px rgba(27,156,255,0.4); transform: scale(1.1); background: rgba(255,255,255,0.05); }
+.bar-btn.close { }
+.bar-btn.close:hover { color: var(--red); text-shadow: 0 0 8px rgba(248,113,113,0.4); background: rgba(248,113,113,0.1); }
+
+/* ── Status ───────────────────────────────────────────────────────────── */
+#status {
+  padding: 2px 14px 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: calc(11px * var(--font-scale));
+  flex-shrink: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: 0.2px;
+  display: flex; align-items: center;
+  transition: color 0.3s;
+}
+
+/* ── Content ──────────────────────────────────────────────────────────── */
+#content-wrap {
+  flex: 1; overflow: hidden; position: relative;
+  padding: 0 14px 10px;
+  background: transparent;
+}
+#content {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface2) transparent;
+}
+#content::-webkit-scrollbar { width: 8px; }
+#content::-webkit-scrollbar-track { background: transparent; border-radius: 4px; }
+#content::-webkit-scrollbar-thumb {
+  background: var(--surface2); border-radius: 4px;
+  border: 2px solid var(--bg);
+}
+#content::-webkit-scrollbar-thumb:hover { background: var(--steam); }
+
+/* ── Badges ───────────────────────────────────────────────────────────── */
+.badges { display: flex; gap: 10px; padding-bottom: 8px; }
+.badge-col {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  text-align: center;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.badge-col:hover { border-color: rgba(27,156,255,0.3); box-shadow: var(--glow-steam); }
+.badge-col .label {
+  color: var(--dim); font-size: calc(9px * var(--font-scale));
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px;
+}
+.badge-col .value {
+  font-size: calc(14px * var(--font-scale)); font-weight: 700; letter-spacing: 0.5px;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+/* ── Divider ──────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px; margin: 8px 0;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 6px; padding-bottom: 8px; }
+.tab-btn {
+  padding: 5px 16px;
+  background: var(--surface); color: var(--dim);
+  font-size: calc(10px * var(--font-scale)); font-weight: 700;
+  border: 1px solid var(--border); border-radius: 20px;
+  cursor: pointer; transition: all 0.2s;
+  font-family: inherit; letter-spacing: 0.5px;
+}
+.tab-btn:hover { color: var(--text); border-color: var(--steam); background: var(--surface2); }
+.tab-btn.active {
+  background: var(--steam); color: var(--bright); border-color: var(--steam);
+  box-shadow: 0 0 10px rgba(27,156,255,0.3);
+}
+
+/* ── Spec rows ────────────────────────────────────────────────────────── */
+.spec-row {
+  padding: 8px 10px 8px 12px; margin: 4px 0;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--dim);
+  transition: transform 0.15s, box-shadow 0.2s;
+  position: relative;
+}
+.spec-row:hover { transform: translateX(2px); box-shadow: var(--shadow-sm); }
+.spec-row .head {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.spec-row .head .name { font-size: calc(12px * var(--font-scale)); font-weight: 700; letter-spacing: 0.3px; }
+.spec-row .head .tier {
+  font-size: calc(9px * var(--font-scale)); font-weight: 700;
+  letter-spacing: 0.8px; opacity: 0.85;
+}
+.spec-row .info {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text);
+  padding-top: 4px;
+  white-space: pre-line;
+  word-break: break-word;
+  font-weight: 600;
+}
+
+/* ── Performance ──────────────────────────────────────────────────────── */
+.perf-section {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 4px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.perf-section:hover { border-color: rgba(27,156,255,0.2); box-shadow: 0 0 8px rgba(27,156,255,0.08); }
+.perf-header {
+  color: var(--steam); font-size: calc(11px * var(--font-scale));
+  font-weight: 700; letter-spacing: 0.5px;
+  display: flex; align-items: center; gap: 6px;
+}
+.perf-header::before { content:'📊'; font-size: calc(12px * var(--font-scale)); }
+.perf-meta { color: var(--dim); font-size: calc(10px * var(--font-scale)); white-space: pre-line; padding: 4px 0 3px; }
+.perf-presets { font-size: calc(11px * var(--font-scale)); color: var(--bright); white-space: pre-line; opacity: 0.9; }
+
+/* ── Upgrades ─────────────────────────────────────────────────────────── */
+.upgrade-section {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 4px;
+  transition: border-color 0.2s;
+}
+.upgrade-section:hover { border-color: rgba(27,156,255,0.15); }
+.upgrade-header {
+  color: var(--steam); font-size: calc(11px * var(--font-scale));
+  font-weight: 700; white-space: pre-line; letter-spacing: 0.3px;
+  display: flex; align-items: center; gap: 6px;
+}
+.upgrade-header::before { content:'🔧'; font-size: calc(12px * var(--font-scale)); }
+.upgrade-reason {
+  font-size: calc(11px * var(--font-scale)); color: var(--text);
+  padding: 6px 0 2px; opacity: 0.85;
+}
+.upgrade-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 4px; padding: 5px 14px;
+  background: linear-gradient(135deg, var(--surface2), var(--surface));
+  color: var(--text); border: 1px solid var(--border);
+  border-radius: 20px; cursor: pointer;
+  font-size: calc(10px * var(--font-scale));
+  font-family: inherit; transition: all 0.2s;
+}
+.upgrade-btn:hover {
+  border-color: var(--steam); color: var(--bright);
+  box-shadow: 0 0 8px rgba(27,156,255,0.2);
+  transform: translateY(-1px);
+}
+.upgrade-deal-info {
+  font-size: calc(10px * var(--font-scale)); color: var(--dim);
+  padding-top: 2px; padding-left: 2px;
+}
+
+/* ── Summary ──────────────────────────────────────────────────────────── */
+.summary-text {
+  color: var(--dim); font-size: calc(11px * var(--font-scale));
+  padding: 8px 0 4px; letter-spacing: 0.2px;
+}
+
+/* ── Settings overlay ─────────────────────────────────────────────────── */
+#settings-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+#settings-overlay.open { opacity: 1; pointer-events: auto; }
+#settings-overlay .settings-bar {
+  display: flex; align-items: center;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  flex-shrink: 0;
+  position: relative;
+}
+#settings-overlay .settings-bar::after {
+  content: '';
+  position: absolute; bottom: 0; left: 14px; right: 14px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--steam), transparent);
+  opacity: 0.25;
+}
+#settings-overlay .settings-bar .title {
+  color: var(--steam); font-weight: 700;
+  font-size: calc(13px * var(--font-scale));
+  letter-spacing: 1.2px;
+  text-shadow: 0 0 16px rgba(27,156,255,0.3);
+}
+#settings-overlay .settings-bar .spacer { flex: 1; }
+#settings-body {
+  flex: 1; overflow-y: auto; padding: 14px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface2) transparent;
+}
+#settings-body::-webkit-scrollbar { width: 8px; }
+#settings-body::-webkit-scrollbar-track { background: transparent; }
+#settings-body::-webkit-scrollbar-thumb {
+  background: var(--surface2); border-radius: 4px; border: 2px solid var(--bg);
+}
+#settings-body::-webkit-scrollbar-thumb:hover { background: var(--steam); }
+
+.settings-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s;
+}
+.settings-card:hover { border-color: rgba(27,156,255,0.15); }
+.settings-card h3 {
+  color: var(--steam); font-size: calc(11px * var(--font-scale)); font-weight: 700;
+  margin-bottom: 8px; letter-spacing: 0.5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-card .row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+}
+.settings-card label {
+  color: var(--text); font-size: calc(10px * var(--font-scale));
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.settings-card select, .settings-card input[type="text"] {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  padding: 5px 8px; font-size: calc(10px * var(--font-scale)); font-family: inherit;
+  border-radius: var(--radius-sm); transition: border-color 0.2s;
+}
+.settings-card select:focus, .settings-card input[type="text"]:focus {
+  border-color: var(--steam); outline: none;
+  box-shadow: 0 0 0 2px rgba(27,156,255,0.15);
+}
+.settings-card input[type="range"] {
+  flex: 1; accent-color: var(--steam);
+  height: 4px; border-radius: 2px;
+}
+.settings-card .val {
+  color: var(--dim); font-size: calc(9px * var(--font-scale));
+  min-width: 36px; text-align: right; font-variant-numeric: tabular-nums;
+}
+
+.settings-card input[type="checkbox"],
+.settings-card input[type="radio"] { accent-color: var(--steam); }
+
+.settings-card .color-row {
+  display: flex; align-items: center; gap: 10px; padding: 3px 0;
+}
+.settings-card .color-swatch {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border); flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s, border-color 0.2s;
+}
+.settings-card .color-swatch:hover { transform: scale(1.15); border-color: var(--steam); }
+.settings-card .color-label {
+  color: var(--text); font-size: calc(10px * var(--font-scale));
+  min-width: 60px; font-weight: 600;
+}
+.settings-card .color-hex {
+  color: var(--dim); font-size: calc(9px * var(--font-scale));
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+.settings-card .color-input {
+  width: 28px; height: 24px; border: 1px solid var(--border); cursor: pointer;
+  background: none; padding: 0; border-radius: var(--radius-sm);
+}
+
+.settings-btns {
+  display: flex; gap: 8px; padding-top: 12px; flex-wrap: wrap;
+}
+.settings-btns .btn-s {
+  padding: 6px 16px; border: 1px solid var(--border); cursor: pointer;
+  font-size: calc(10px * var(--font-scale)); font-family: inherit;
+  background: var(--surface2); color: var(--text);
+  border-radius: 20px; transition: all 0.2s;
+}
+.settings-btns .btn-s:hover {
+  border-color: var(--steam); color: var(--bright);
+  box-shadow: 0 0 6px rgba(27,156,255,0.15);
+}
+.settings-btns .btn-s.primary {
+  background: var(--steam); color: var(--bright);
+  font-weight: 700; border-color: var(--steam);
+}
+.settings-btns .btn-s.primary:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 12px rgba(27,156,255,0.35);
+}
+.settings-btns .spacer { flex: 1; }
+
+/* ── Resize handles ──────────────────────────────────────────────────── */
+.resize-handle {
+  position: fixed; z-index: 200;
+}
+.resize-n  { top:0; left:8px; right:8px; height:6px; cursor:ns-resize; }
+.resize-s  { bottom:0; left:8px; right:8px; height:6px; cursor:ns-resize; }
+.resize-w  { left:0; top:8px; bottom:8px; width:6px; cursor:ew-resize; }
+.resize-e  { right:0; top:8px; bottom:8px; width:6px; cursor:ew-resize; }
+.resize-nw { top:0; left:0; width:8px; height:8px; cursor:nwse-resize; }
+.resize-ne { top:0; right:0; width:8px; height:8px; cursor:nesw-resize; }
+.resize-sw { bottom:0; left:0; width:8px; height:8px; cursor:nesw-resize; }
+.resize-se { bottom:0; right:0; width:8px; height:8px; cursor:nwse-resize; }
+
+/* ── Animations ──────────────────────────────────────────────────────── */
+@keyframes fadeSlideIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+@keyframes statusPulse { 0%,100% { opacity:0.4; } 50% { opacity:1; } }
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.spec-row { animation: fadeSlideIn 0.2s ease both; }
+.spec-row:nth-child(1) { animation-delay: 0s; }
+.spec-row:nth-child(2) { animation-delay: 0.04s; }
+.spec-row:nth-child(3) { animation-delay: 0.08s; }
+.spec-row:nth-child(4) { animation-delay: 0.12s; }
+.spec-row:nth-child(5) { animation-delay: 0.16s; }
+.spec-row:nth-child(6) { animation-delay: 0.20s; }
+
+/* Tab content fade on switch */
+#tab-content { animation: fadeIn 0.2s ease; }
+
+/* Status waiting pulse */
+#status.waiting::before {
+  content: ''; display: inline-block;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--steam); margin-right: 7px;
+  vertical-align: middle;
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+/* Badge value subtle glow — colors set inline by JS */
+.badge-col .value { text-shadow: 0 0 10px currentColor; }
+
+/* Spec-row left-side radiance (matches border-left color, very cheap) */
+.spec-row::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 18px;
+  background: linear-gradient(90deg, currentColor, transparent);
+  opacity: 0.04; border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  pointer-events: none;
+}
+.spec-row:hover::before { opacity: 0.08; }
+
+/* Performance section top accent line */
+.perf-section { position: relative; overflow: hidden; }
+.perf-section::before {
+  content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--steam), transparent);
+  opacity: 0.25;
+}
+
+/* Upgrade section top accent */
+.upgrade-section { position: relative; overflow: hidden; }
+.upgrade-section::before {
+  content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--steam), transparent);
+  opacity: 0.15;
+}
+
+/* Divider shimmer on result load */
+.divider {
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, transparent 25%, var(--border) 50%, transparent 75%);
+  animation: shimmer 2s ease 1;
+}
+
+/* Settings card subtle entrance */
+.settings-card { animation: fadeSlideIn 0.15s ease both; }
+.settings-card:nth-child(2) { animation-delay: 0.04s; }
+.settings-card:nth-child(3) { animation-delay: 0.08s; }
+.settings-card:nth-child(4) { animation-delay: 0.12s; }
+</style>
+</head>
+<body>
+
+<!-- Resize handles -->
+<div class="resize-handle resize-n"  data-dir="n"></div>
+<div class="resize-handle resize-s"  data-dir="s"></div>
+<div class="resize-handle resize-w"  data-dir="w"></div>
+<div class="resize-handle resize-e"  data-dir="e"></div>
+<div class="resize-handle resize-nw" data-dir="nw"></div>
+<div class="resize-handle resize-ne" data-dir="ne"></div>
+<div class="resize-handle resize-sw" data-dir="sw"></div>
+<div class="resize-handle resize-se" data-dir="se"></div>
+
+<div id="app">
+  <div id="titlebar">
+    <span class="logo">◆ STEAMSCOUT</span>
+    <span class="spacer"></span>
+    <button class="bar-btn" id="btn-settings" title="Settings">⚙</button>
+    <button class="bar-btn close" id="btn-close" title="Close">✕</button>
+  </div>
+  <div id="status" class="waiting">Waiting for Steam game page...</div>
+  <div id="content-wrap">
+    <div id="content"></div>
+  </div>
+</div>
+
+<!-- Settings panel (slides over content) -->
+<div id="settings-overlay">
+  <div class="settings-bar">
+    <span class="title">◆ STEAMSCOUT SETTINGS</span>
+    <span class="spacer"></span>
+    <button class="bar-btn close" id="btn-settings-close" title="Close">✕</button>
+  </div>
+  <div id="settings-body"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   SteamScout UI — pure JS, talks to Python via pywebview bridge
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const SECTION_ICONS = {
+  "Store page":"🛒","Library":"📚","Community hub":"👥",
+  "News":"📰","Reviews":"⭐","Workshop":"🔧",
+  "Achievements":"🏆","DLC":"📦"
+};
+
+const STATUS_TEXT = {pass:"MEETS",fail:"BELOW",warn:"MANUAL CHECK",info:"INFO",unknown:"UNKNOWN"};
+const OVERALL = {pass:{c:"var(--green)",t:"CAN RUN"},fail:{c:"var(--red)",t:"MAY NOT RUN"},unknown:{c:"var(--dim)",t:"CHECKING..."},unavailable:{c:"var(--dim)",t:"NOT AVAILABLE"}};
+
+let _settings = {};
+let _statusColors = {};
+let _currentTab = "minimum";
+let _lastData = null;
+let _dealCache = {};
+
+/* ── DOM refs ─────────────────────────────────────────────────────────── */
+const $status  = document.getElementById("status");
+const $content = document.getElementById("content");
+const $settingsOverlay = document.getElementById("settings-overlay");
+const $settingsBody    = document.getElementById("settings-body");
+
+/* ── Title bar buttons ────────────────────────────────────────────────── */
+document.getElementById("btn-close").onclick = () => {
+  if (window.pywebview) window.pywebview.api.close_overlay();
+};
+document.getElementById("btn-settings").onclick = () => openSettings();
+document.getElementById("btn-settings-close").onclick = () => closeSettings();
+
+/* ── Drag window via titlebar ─────────────────────────────────────── */
+document.getElementById("titlebar").addEventListener("mousedown", e => {
+  if (e.target.closest(".bar-btn")) return;
+  e.preventDefault();
+  if (window.pywebview) window.pywebview.api.start_native_drag();
+});
+
+/* ── Resize handles — native Win32 resize loop ────────────────────── */
+document.querySelectorAll(".resize-handle").forEach(el => {
+  el.addEventListener("mousedown", e => {
+    e.preventDefault(); e.stopPropagation();
+    if (window.pywebview) window.pywebview.api.start_native_resize(el.dataset.dir);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PUBLIC API — called from Python via evaluate_js("window.SS.xxx()")
+   ═══════════════════════════════════════════════════════════════════════ */
+window.SS = {
+  applySettings(s) {
+    _settings = s;
+    if (s.colors) {
+      const c = s.colors;
+      const r = document.documentElement.style;
+      r.setProperty("--bg",      c.BG      || "");
+      r.setProperty("--surface", c.SURFACE  || "");
+      r.setProperty("--surface2",c.SURFACE2 || "");
+      r.setProperty("--border",  c.BORDER   || "");
+      r.setProperty("--text",    c.TEXT     || "");
+      r.setProperty("--dim",     c.DIM      || "");
+      r.setProperty("--bright",  c.BRIGHT   || "");
+      r.setProperty("--steam",   c.STEAM    || "");
+    }
+    if (s.status_colors) _statusColors = s.status_colors;
+    if (s.font_family) {
+      document.documentElement.style.setProperty("--font-family",
+        `'${s.font_family}', 'Segoe UI Variable', 'Segoe UI', sans-serif`);
+    }
+    if (s.font_scale) {
+      document.documentElement.style.setProperty("--font-scale", s.font_scale);
+    }
+  },
+
+  showIdle() {
+    $status.textContent = "Watching Steam — navigate to a game page...";
+    $status.style.color = "var(--dim)";
+    $status.classList.add("waiting");
+    $content.innerHTML = "";
+    _lastData = null;
+  },
+
+  showConnecting() {
+    $status.textContent = "⟳  Connecting to backend...";
+    $status.style.color = "var(--dim)";
+    $status.classList.add("waiting");
+    $content.innerHTML = "";
+  },
+
+  showLoading(appId, section) {
+    const icon = SECTION_ICONS[section] || "";
+    $status.textContent = `⟳  ${icon} Looking up AppID ${appId} (${section})...`;
+    $status.style.color = "var(--blue)";
+    $status.classList.add("waiting");
+    $content.innerHTML = "";
+  },
+
+  showError(appId, section, msg) {
+    $status.textContent = `⚠  AppID ${appId}: ${msg}`;
+    $status.style.color = "var(--yellow)";
+    $status.classList.remove("waiting");
+    $content.innerHTML = "";
+  },
+
+  showWarning(msg) {
+    $status.textContent = `⚠  ${msg}`;
+    $status.style.color = "var(--yellow)";
+    $status.classList.remove("waiting");
+    $content.innerHTML = "";
+  },
+
+  showResult(data) {
+    _lastData = data;
+    const reqs   = data.reqs || {};
+    const compat = data.compat || {};
+    const section = data.section || "";
+    const icon = SECTION_ICONS[section] || "";
+    const name = reqs.name || `AppID ${data.app_id}`;
+
+    $status.textContent = `${icon}  ${name}  —  ${section}`;
+    $status.style.color = "var(--dim)";
+    $status.classList.remove("waiting");
+
+    let html = "";
+
+    // Overall badges
+    html += '<div class="badges">';
+    for (const [key, label] of [["overall_min","MINIMUM"],["overall_rec","RECOMMENDED"]]) {
+      const st = compat[key] || "unknown";
+      const o = OVERALL[st] || OVERALL.unknown;
+      html += `<div class="badge-col"><div class="label">${label}</div><div class="value" style="color:${o.c}">${o.t}</div></div>`;
+    }
+    html += '</div>';
+
+    html += '<div class="divider"></div>';
+
+    // Tabs
+    html += '<div class="tabs">';
+    html += `<button class="tab-btn${_currentTab==="minimum"?" active":""}" data-tab="minimum">MINIMUM</button>`;
+    html += `<button class="tab-btn${_currentTab==="recommended"?" active":""}" data-tab="recommended">RECOMMENDED</button>`;
+    html += '</div>';
+
+    html += '<div id="tab-content"></div>';
+
+    $content.innerHTML = html;
+
+    // Wire tabs
+    $content.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.onclick = () => {
+        _currentTab = btn.dataset.tab;
+        $content.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === _currentTab));
+        const tc = document.getElementById("tab-content");
+        if (tc) { tc.style.animation = 'none'; tc.offsetHeight; tc.style.animation = ''; }
+        renderTab(compat);
+      };
+    });
+
+    renderTab(compat);
+  },
+
+  updateDeals(deals) {
+    _dealCache = deals;
+    // Re-render upgrade section if result showing
+    if (_lastData) {
+      const el = document.getElementById("upgrades-section");
+      if (el && _lastData.compat) {
+        el.innerHTML = buildUpgrades(_lastData.compat, _currentTab);
+        wireUpgradeButtons();
+      }
+    }
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Rendering helpers
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function renderTab(compat) {
+  const tc = document.getElementById("tab-content");
+  if (!tc) return;
+
+  const ORDER = ["ram","os","cpu","gpu","directx","storage"];
+  const tier = compat[_currentTab] || {};
+  const tierLabel = _currentTab === "minimum" ? "MINIMUM" : "RECOMMENDED";
+  const overallKey = _currentTab === "minimum" ? "overall_min" : "overall_rec";
+  const shownRows = [];
+
+  let html = "";
+
+  // Show notice when no requirements are available for this tier
+  if (compat[overallKey] === "unavailable") {
+    html += '<div class="spec-row" style="background:var(--card);border-left-color:var(--dim);text-align:center;padding:18px 14px">';
+    html += `<div style="color:var(--dim);font-size:13px">No ${tierLabel.toLowerCase()} requirements listed for this game.</div>`;
+    html += '</div>';
+  }
+  for (const key of ORDER) {
+    const d = tier[key];
+    if (!d) continue;
+    shownRows.push([key, d]);
+    const st = d.status || "unknown";
+    const sc = _statusColors[st] || _statusColors["unknown"] || {color:"#6060a0",bg:"#1a1a22",icon:"?"};
+    const label = ["cpu","gpu","os","ram"].includes(key) ? key.toUpperCase() : key.charAt(0).toUpperCase()+key.slice(1);
+    const statusText = STATUS_TEXT[st] || "UNKNOWN";
+
+    const yours = d.yours || "—";
+    const req = d.required || "";
+    let info = `Your PC: ${esc(yours)}`;
+    if (req) info += `\nRequired: ${esc(req)}`;
+
+    html += `<div class="spec-row" style="background:${sc.bg};border-left-color:${sc.color}">`;
+    html += `<div class="head"><span class="name" style="color:${sc.color}">${sc.icon}  ${esc(label)}</span>`;
+    html += `<span class="tier" style="color:${sc.color}">${tierLabel}  ${statusText}</span></div>`;
+    html += `<div class="info" style="color:${sc.text || 'var(--text)'}">${info}</div>`;
+    html += '</div>';
+  }
+
+  // Performance
+  const perf = compat.performance;
+  if (perf) {
+    html += '<div class="divider"></div>';
+    html += '<div class="perf-section">';
+    html += '<div class="perf-header">Estimated Performance</div>';
+    let meta = `Model: ${esc(perf.model||"Heuristic")}`;
+    if (perf.score != null) meta += `  |  Score: ${perf.score}`;
+    meta += `\nConfidence: ${(perf.confidence||"low").toUpperCase()}`;
+    if (perf.note) meta += `\n${esc(perf.note)}`;
+    html += `<div class="perf-meta">${meta}</div>`;
+    const presets = perf.presets || {};
+    const lines = [];
+    for (const lv of ["low","medium","high"]) {
+      if (presets[lv]) lines.push(`${lv.charAt(0).toUpperCase()+lv.slice(1)} settings: ${esc(presets[lv])}`);
+    }
+    if (lines.length) html += `<div class="perf-presets">${lines.join("\n")}</div>`;
+    html += '</div>';
+  }
+
+  // Summary
+  const measurable = new Set(["ram","os","storage"]);
+  const autoRows = shownRows.filter(([k,d]) => measurable.has(k) && (d.status==="pass"||d.status==="fail"));
+  const met = autoRows.filter(([,d]) => d.status==="pass").length;
+  if (autoRows.length) {
+    const tl = _currentTab === "minimum" ? "Minimum" : "Recommended";
+    html += `<div class="summary-text">${tl} auto-checked requirements met: ${met}/${autoRows.length}</div>`;
+  }
+
+  // Upgrades
+  html += `<div id="upgrades-section">${buildUpgrades(compat, _currentTab)}</div>`;
+
+  tc.innerHTML = html;
+  wireUpgradeButtons();
+}
+
+function buildUpgrades(compat, tabName) {
+  const tier = compat[tabName] || {};
+  const upgradeRows = [];
+  for (const key of ["ram","cpu","gpu","storage"]) {
+    const d = tier[key];
+    if (!d || d.status !== "fail") continue;
+    const reason = tabName === "minimum" ? "Below minimum" : "Below recommended";
+    upgradeRows.push([key, d.required||"", reason]);
+  }
+  if (!upgradeRows.length) return "";
+
+  let html = '<div class="divider"></div>';
+  html += '<div class="upgrade-section">';
+  html += '<div class="upgrade-header">Upgrade Options\nClick a suggestion to find compatible parts.</div>';
+
+  for (const [key, required, reason] of upgradeRows) {
+    const part = {ram:"RAM",cpu:"CPU",gpu:"GPU",storage:"Storage"}[key] || key.toUpperCase();
+    const need = required || "See game requirement";
+    const query = upgradeQueryKey(key, required);
+    const deal = _dealCache[query] || {};
+    const url = deal.url || ebayUrl(query);
+
+    html += `<div class="upgrade-reason">${esc(part)}: ${esc(reason)} (target: ${esc(need)})</div>`;
+
+    let btnText;
+    if (deal.loading) btnText = `Finding cheapest ${part}...`;
+    else if (deal.price) btnText = `Find Cheapest Online (${esc(deal.price)})`;
+    else btnText = "Find Cheapest Online";
+
+    html += `<button class="upgrade-btn" data-url="${esc(url)}">${btnText}</button>`;
+
+    if (deal.title && !deal.loading) {
+      let title = deal.title;
+      if (title.length > 54) title = title.substring(0, 53) + "...";
+      html += `<div class="upgrade-deal-info">${esc(deal.store||"Store")}: ${esc(title)}</div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function wireUpgradeButtons() {
+  document.querySelectorAll(".upgrade-btn").forEach(btn => {
+    btn.onclick = () => {
+      if (window.pywebview) window.pywebview.api.open_url(btn.dataset.url);
+    };
+  });
+}
+
+/* Simple upgrade query key — mirrors Python logic enough to match deal cache keys */
+function upgradeQueryKey(key, required) {
+  required = (required||"").replace(/\s+/g," ").trim();
+  // Simplified — just use the same pattern Python uses for cache key matching
+  const mode = (_settings.upgrade_query_mode || "specific");
+  if (key === "ram") {
+    if (mode === "general") return "gaming PC RAM upgrade";
+    const m = required.match(/(\d+(?:\.\d+)?)\s*(tb|gb|mb)/i);
+    if (m) {
+      let gb = parseFloat(m[1]);
+      if (m[2].toLowerCase()==="tb") gb = Math.round(gb*1024);
+      else if (m[2].toLowerCase()==="mb") gb = Math.max(1,Math.round(gb/1024));
+      else gb = Math.round(gb);
+      return `buy ${gb}GB desktop RAM DDR4 or DDR5`;
+    }
+    return `buy ${required} desktop RAM` || "desktop gaming RAM upgrade kit";
+  }
+  if (key === "storage") {
+    if (mode === "general") return "gaming PC SSD storage upgrade";
+    const m = required.match(/(\d+(?:\.\d+)?)\s*(tb|gb|mb)/i);
+    const kind = /ssd|nvme/i.test(required) ? "SSD" : "drive";
+    if (m) {
+      let gb = parseFloat(m[1]);
+      if (m[2].toLowerCase()==="tb") gb = Math.round(gb*1024);
+      else if (m[2].toLowerCase()==="mb") gb = Math.max(1,Math.round(gb/1024));
+      else gb = Math.round(gb);
+      return `buy ${gb}GB ${kind} for PC`;
+    }
+    return `buy ${required} PC storage` || "gaming PC SSD storage upgrade";
+  }
+  if (key === "cpu") {
+    if (mode === "general") return "gaming PC CPU upgrade";
+    return required ? `buy PC CPU similar or better than ${required}` : "gaming PC CPU upgrade";
+  }
+  if (key === "gpu") {
+    if (mode === "general") return "gaming PC graphics card upgrade";
+    return required ? `buy graphics card similar or better than ${required}` : "gaming PC dedicated graphics card upgrade";
+  }
+  return `buy PC part upgrade ${required}`;
+}
+
+function ebayUrl(query) {
+  return `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(query)}&_sop=15&LH_BIN=1`;
+}
+
+function esc(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Settings panel
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function openSettings() {
+  $settingsOverlay.classList.add("open");
+  renderSettingsBody();
+}
+
+function closeSettings() {
+  $settingsOverlay.classList.remove("open");
+}
+
+function renderSettingsBody() {
+  const s = _settings;
+  let html = "";
+
+  // Appearance
+  html += '<div class="settings-card">';
+  html += '<h3>🎨 Appearance</h3>';
+
+  // Theme
+  html += '<div class="row">';
+  html += `<label><input type="radio" name="theme" value="dark" ${s.theme_mode==="dark"?"checked":""}> Dark</label>`;
+  html += `<label><input type="radio" name="theme" value="light" ${s.theme_mode==="light"?"checked":""}> Light</label>`;
+  html += '</div>';
+
+  // Font family — dropdown populated from system fonts
+  html += '<div class="row"><label>Font Family</label>';
+  html += '<select id="set-font" style="flex:1"></select>';
+  html += '</div>';
+
+  // Custom font files
+  html += '<div class="row">';
+  html += `<button class="btn-s" id="btn-add-font" style="border-radius:20px;border:1px solid var(--border);padding:5px 14px">Add Custom Font File...</button>`;
+  const files = s.custom_font_files || [];
+  if (files.length) html += `<span style="color:var(--dim);font-size:calc(9px * var(--font-scale))">${files.length} file(s) added</span>`;
+  html += '</div>';
+
+  // Opacity
+  html += `<div class="row"><label>Opacity</label>
+    <input type="range" id="set-opacity" min="0.5" max="1" step="0.01" value="${s.opacity||0.96}">
+    <span class="val" id="val-opacity">${(s.opacity||0.96).toFixed(2)}</span></div>`;
+
+  // Font scale
+  html += `<div class="row"><label>Font Size Scale</label>
+    <input type="range" id="set-fontscale" min="0.8" max="1.5" step="0.05" value="${s.font_scale||1}">
+    <span class="val" id="val-fontscale">${(s.font_scale||1).toFixed(2)}x</span></div>`;
+
+  // Always on top
+  html += `<div class="row"><label><input type="checkbox" id="set-topmost" ${s.always_on_top?"checked":""}> Keep overlay always on top</label></div>`;
+
+  html += '</div>'; // end appearance card
+
+  // Colors
+  html += '<div class="settings-card">';
+  html += '<h3>🎨 Custom Colors</h3>';
+  const colorKeys = ["BG","SURFACE","SURFACE2","BORDER","TEXT","DIM","STEAM"];
+  const colors = (s.colors || {});
+  for (const k of colorKeys) {
+    const cv = colors[k] || "#000";
+    html += `<div class="color-row">
+      <div class="color-swatch" style="background:${cv}"></div>
+      <span class="color-label">${k}</span>
+      <span class="color-hex">${cv}</span>
+      <input type="color" class="color-input" data-key="${k}" value="${cv}">
+    </div>`;
+  }
+  html += '</div>';
+
+  // Behavior
+  html += '<div class="settings-card">';
+  html += '<h3>⚡ Startup</h3>';
+  html += `<div class="row"><label><input type="checkbox" id="set-autolaunch" ${s.auto_launch?"checked":""}> Auto-launch when I log in</label></div>`;
+  html += '<h3 style="margin-top:8px;padding-top:8px">🔍 Upgrade Search</h3>';
+  html += `<div class="row"><label><input type="radio" name="qmode" value="specific" ${(s.upgrade_query_mode||"specific")==="specific"?"checked":""}> Specific item from game requirement</label></div>`;
+  html += `<div class="row"><label><input type="radio" name="qmode" value="general" ${s.upgrade_query_mode==="general"?"checked":""}> General upgrade suggestions</label></div>`;
+  html += '</div>';
+
+  // Buttons
+  html += '<div class="settings-btns">';
+  html += '<button class="btn-s" id="btn-reset-colors">Reset Theme Colors</button>';
+  html += '<button class="btn-s" id="btn-reset-all">Reset All</button>';
+  html += '<span class="spacer"></span>';
+  html += '<button class="btn-s" id="btn-cancel">Cancel</button>';
+  html += '<button class="btn-s primary" id="btn-save">Save</button>';
+  html += '</div>';
+
+  $settingsBody.innerHTML = html;
+
+  // Populate font dropdown from system fonts
+  (async () => {
+    const sel = document.getElementById("set-font");
+    let fonts = ["Bahnschrift","Segoe UI","Consolas","Arial"];
+    try {
+      if (window.pywebview) fonts = await window.pywebview.api.get_system_fonts();
+    } catch(e) {}
+    const current = (s.font_family || "Bahnschrift");
+    for (const f of fonts) {
+      const opt = document.createElement("option");
+      opt.value = f; opt.textContent = f;
+      if (f === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    // Live preview font
+    sel.onchange = () => {
+      document.documentElement.style.setProperty("--font-family",
+        `'${sel.value}', 'Segoe UI Variable', 'Segoe UI', sans-serif`);
+    };
+  })();
+
+  // Live preview theme switch
+  document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    radio.onchange = async () => {
+      if (!window.pywebview) return;
+      try {
+        const themes = await window.pywebview.api.get_themes();
+        const c = themes[radio.value] || themes["dark"];
+        const r = document.documentElement.style;
+        for (const [k,v] of Object.entries(c)) {
+          const varName = "--" + k.toLowerCase();
+          r.setProperty(varName, v);
+        }
+        // Update color pickers to reflect new theme
+        document.querySelectorAll(".color-input").forEach(inp => {
+          const key = inp.dataset.key;
+          if (c[key]) {
+            inp.value = c[key];
+            const row = inp.closest(".color-row");
+            row.querySelector(".color-swatch").style.background = c[key];
+            row.querySelector(".color-hex").textContent = c[key];
+          }
+        });
+      } catch(e) {}
+    };
+  });
+
+  // Wire events
+  document.getElementById("set-opacity").oninput = e => {
+    document.getElementById("val-opacity").textContent = parseFloat(e.target.value).toFixed(2);
+  };
+  document.getElementById("set-fontscale").oninput = e => {
+    const v = (Math.round(parseFloat(e.target.value)/0.05)*0.05);
+    document.getElementById("val-fontscale").textContent = v.toFixed(2)+"x";
+  };
+  document.getElementById("btn-add-font").onclick = async () => {
+    if (window.pywebview) await window.pywebview.api.pick_font_file();
+  };
+
+  // Color pickers
+  document.querySelectorAll(".color-input").forEach(inp => {
+    inp.oninput = () => {
+      const row = inp.closest(".color-row");
+      row.querySelector(".color-swatch").style.background = inp.value;
+      row.querySelector(".color-hex").textContent = inp.value;
+    };
+  });
+
+  document.getElementById("btn-cancel").onclick = closeSettings;
+  document.getElementById("btn-reset-colors").onclick = () => {
+    _settings.custom_colors = {};
+    if (window.pywebview) window.pywebview.api.save_settings({custom_colors:{}});
+    closeSettings();
+  };
+  document.getElementById("btn-reset-all").onclick = () => {
+    if (window.pywebview) window.pywebview.api.save_settings({
+      theme_mode:"dark", custom_colors:{}, font_family:"Bahnschrift",
+      upgrade_query_mode:"specific", always_on_top:true, opacity:0.96,
+      font_scale:1.0, auto_launch:false
+    });
+    closeSettings();
+  };
+
+  document.getElementById("btn-save").onclick = async () => {
+    const newS = {};
+    newS.theme_mode = document.querySelector('input[name="theme"]:checked')?.value || "dark";
+    newS.font_family = document.getElementById("set-font").value || "Bahnschrift";
+    newS.opacity = parseFloat(document.getElementById("set-opacity").value);
+    newS.font_scale = Math.round(parseFloat(document.getElementById("set-fontscale").value)/0.05)*0.05;
+    newS.always_on_top = document.getElementById("set-topmost").checked;
+    newS.upgrade_query_mode = document.querySelector('input[name="qmode"]:checked')?.value || "specific";
+
+    const autoLaunch = document.getElementById("set-autolaunch").checked;
+    newS.auto_launch = autoLaunch;
+
+    // Collect custom colors — only store overrides that differ from the chosen theme
+    const cc = {};
+    let themeColors = {};
+    try {
+      if (window.pywebview) {
+        const themes = await window.pywebview.api.get_themes();
+        themeColors = themes[newS.theme_mode] || {};
+      }
+    } catch(e) {}
+    document.querySelectorAll(".color-input").forEach(inp => {
+      const key = inp.dataset.key;
+      const val = inp.value;
+      // Only save as custom if it differs from the base theme color
+      if (themeColors[key] && val.toLowerCase() === themeColors[key].toLowerCase()) return;
+      cc[key] = val;
+    });
+    newS.custom_colors = cc;
+
+    if (window.pywebview) {
+      await window.pywebview.api.save_settings(newS);
+      if (autoLaunch !== (_settings.auto_launch || false)) {
+        await window.pywebview.api.toggle_auto_launch(autoLaunch);
+      }
+    }
+    closeSettings();
+  };
+}
+</script>
+</body>
+</html>

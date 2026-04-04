@@ -38,6 +38,7 @@ Name: "autostart";   Description: "Start SteamScout when Windows starts"; GroupD
 [Files]
 Source: "dist\{#MyAppExeName}";  DestDir: "{app}"; Flags: ignoreversion
 Source: "SteamScoutIcon.png";    DestDir: "{app}"; Flags: ignoreversion
+Source: "overlay_ui.html";       DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}";           Filename: "{app}\{#MyAppExeName}"

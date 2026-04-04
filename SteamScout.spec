@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('C:\\Users\\GGPC\\Documents\\SteamScout\\SteamScoutIcon.png', '.'), ('C:\\Users\\GGPC\\Documents\\SteamScout\\overlay_ui.html', '.')]
+binaries = []
+hiddenimports = ['Backend', 'Overlay', 'pystray._win32', 'webview', 'webview.platforms.winforms', 'webview.platforms.edgechromium', 'clr_loader', 'pythonnet']
+tmp_ret = collect_all('webview')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['C:\\Users\\GGPC\\Documents\\SteamScout\\SteamScout.pyw'],
     pathex=[],
-    binaries=[],
-    datas=[('C:\\Users\\GGPC\\Documents\\SteamScout\\SteamScoutIcon.png', '.')],
-    hiddenimports=['pystray._win32'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

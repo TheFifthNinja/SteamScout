@@ -1,7 +1,7 @@
 """
-Steam Compatibility Checker - Overlay (v2)
-Floating always-on-top window. Connects to backend WebSocket and shows
-real-time compatibility info based on the exact Steam page being viewed.
+Steam Compatibility Checker - Overlay (v3 — pywebview / Edge WebView2)
+GPU-accelerated floating overlay window.  Connects to the backend WebSocket
+and pushes real-time compatibility info to an HTML/CSS/JS front-end.
 """
 
 import asyncio
@@ -10,109 +10,89 @@ import os
 import re
 import sys
 import threading
-import tkinter as tk
-import tkinter.font as tkfont
-from tkinter import filedialog
-from tkinter import ttk
+import time
 import webbrowser
 from html import unescape
 from urllib.parse import quote_plus
-import websockets
+
 import requests
-import winreg
-import subprocess
+import websockets
+import webview                           # pywebview >= 5.0
+
+if sys.platform == "win32":
+    import ctypes
+    import ctypes.wintypes
+    _user32 = ctypes.windll.user32
+    _user32.FindWindowW.argtypes = [ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPCWSTR]
+    _user32.FindWindowW.restype = ctypes.wintypes.HWND
+    _user32.SetWindowPos.argtypes = [
+        ctypes.wintypes.HWND, ctypes.wintypes.HWND,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+    ]
+    _user32.SetWindowPos.restype = ctypes.wintypes.BOOL
+    _VK_LBUTTON = 0x01
+    _SWP_NOZORDER = 0x0004
+    _SWP_NOACTIVATE = 0x0010
+    _SWP_NOSIZE = 0x0001
+    _MIN_W, _MIN_H = 460, 180
 
 WS_URL = "ws://localhost:8765"
 
+# ── Paths ──────────────────────────────────────────────────────────────────────
+
 def _data_dir():
-    """Return %APPDATA%/SteamScout for user data (settings, etc.)."""
     d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "SteamScout")
     os.makedirs(d, exist_ok=True)
     return d
 
 SETTINGS_PATH = os.path.join(_data_dir(), "overlay_settings.json")
 
-# ── Colour palette ─────────────────────────────────────────────────────────────
-BG       = "#0f0f13"
-SURFACE  = "#1a1a22"
-SURFACE2 = "#22222e"
-BORDER   = "#2a2a38"
-TEXT     = "#e0e0f0"
-DIM      = "#6060a0"
-BRIGHT   = "#ffffff"
+def _ui_path():
+    """Locate overlay_ui.html next to this script (or in the frozen bundle)."""
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS if hasattr(sys, "_MEIPASS") else os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "overlay_ui.html")
 
-GREEN    = "#4ade80";  GREEN_BG  = "#0d2416"
-YELLOW   = "#fbbf24";  YELLOW_BG = "#221800"
-RED      = "#f87171";  RED_BG    = "#220d0d"
-BLUE     = "#60a5fa";  BLUE_BG   = "#0d1628"
-STEAM    = "#1b9cff"
-
-STATUS = {
-    "pass":    (GREEN,  GREEN_BG,  "✓"),
-    "fail":    (RED,    RED_BG,    "✗"),
-    "info":    (BLUE,   BLUE_BG,   "ℹ"),
-    "warn":    (YELLOW, YELLOW_BG, "⚠"),
-    "unknown": (DIM,    SURFACE,   "?"),
-}
-
-OVERALL = {
-    "pass":    (GREEN,  "CAN RUN"),
-    "fail":    (RED,    "MAY NOT RUN"),
-    "unknown": (DIM,    "CHECKING..."),
-}
-
-STATUS_TEXT = {
-    "pass": "MEETS",
-    "fail": "BELOW",
-    "warn": "MANUAL CHECK",
-    "info": "INFO",
-    "unknown": "UNKNOWN",
-}
-
-SECTION_ICONS = {
-    "Store page":      "🛒",
-    "Library":         "📚",
-    "Community hub":   "👥",
-    "News":            "📰",
-    "Reviews":         "⭐",
-    "Workshop":        "🔧",
-    "Achievements":    "🏆",
-    "DLC":             "📦",
-}
-
-W = 520   # overlay width
-H = 260
-MIN_W = 460
-MIN_H = 180
-EDGE_RESIZE_SIZE = 8
-SETTINGS_MIN_W = 520
-SETTINGS_MIN_H = 560
+# ── Settings ───────────────────────────────────────────────────────────────────
 
 THEMES = {
     "dark": {
-        "BG": "#0f0f13",
-        "SURFACE": "#1a1a22",
-        "SURFACE2": "#22222e",
-        "BORDER": "#2a2a38",
-        "TEXT": "#e0e0f0",
-        "DIM": "#6060a0",
-        "BRIGHT": "#ffffff",
-        "STEAM": "#1b9cff",
+        "BG": "#0f0f13", "SURFACE": "#1a1a22", "SURFACE2": "#22222e",
+        "BORDER": "#2a2a38", "TEXT": "#e0e0f0", "DIM": "#6060a0",
+        "BRIGHT": "#ffffff", "STEAM": "#1b9cff",
     },
     "light": {
-        "BG": "#f4f6f8",
-        "SURFACE": "#ffffff",
-        "SURFACE2": "#ebeff3",
-        "BORDER": "#c7d0d9",
-        "TEXT": "#1f2933",
-        "DIM": "#5c6b7a",
-        "BRIGHT": "#0f1720",
-        "STEAM": "#0b78d1",
+        "BG": "#f4f6f8", "SURFACE": "#ffffff", "SURFACE2": "#ebeff3",
+        "BORDER": "#c7d0d9", "TEXT": "#1f2933", "DIM": "#5c6b7a",
+        "BRIGHT": "#0f1720", "STEAM": "#0b78d1",
     },
 }
 
+GREEN    = "#4ade80"; GREEN_BG  = "#0d2416"
+YELLOW   = "#fbbf24"; YELLOW_BG = "#221800"
+RED      = "#f87171"; RED_BG    = "#220d0d"
+BLUE     = "#60a5fa"; BLUE_BG   = "#0d1628"
 
-def _default_settings() -> dict:
+STATUS_COLORS = {
+    "dark": {
+        "pass":    {"color": GREEN,    "bg": GREEN_BG,  "text": "#d0fce0", "icon": "✓"},
+        "fail":    {"color": RED,      "bg": RED_BG,    "text": "#fdd", "icon": "✗"},
+        "info":    {"color": BLUE,     "bg": BLUE_BG,   "text": "#d0e4ff", "icon": "ℹ"},
+        "warn":    {"color": YELLOW,   "bg": YELLOW_BG, "text": "#fde68a", "icon": "⚠"},
+        "unknown": {"color": "#6060a0","bg": "#1a1a22", "text": "#d8d8f0", "icon": "?"},
+    },
+    "light": {
+        "pass":    {"color": "#15803d","bg": "#dcfce7", "text": "#14532d", "icon": "✓"},
+        "fail":    {"color": "#dc2626","bg": "#fee2e2", "text": "#7f1d1d", "icon": "✗"},
+        "info":    {"color": "#2563eb","bg": "#dbeafe", "text": "#1e3a5f", "icon": "ℹ"},
+        "warn":    {"color": "#d97706","bg": "#fef3c7", "text": "#78350f", "icon": "⚠"},
+        "unknown": {"color": "#475569","bg": "#f1f5f9", "text": "#1e293b", "icon": "?"},
+    },
+}
+
+def _default_settings():
     return {
         "theme_mode": "dark",
         "custom_colors": {},
@@ -122,13 +102,12 @@ def _default_settings() -> dict:
         "always_on_top": True,
         "opacity": 0.96,
         "font_scale": 1.0,
-        "window_width": W,
-        "window_height": H,
+        "window_width": 520,
+        "window_height": 260,
         "auto_launch": False,
     }
 
-
-def _load_settings() -> dict:
+def _load_settings():
     base = _default_settings()
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
@@ -143,25 +122,22 @@ def _load_settings() -> dict:
         pass
     return base
 
-
-def _save_settings(data: dict):
+def _save_settings(data):
     try:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception:
         pass
 
+# ── eBay helpers ───────────────────────────────────────────────────────────────
 
-def _ebay_search_url(query: str) -> str:
-    # _sop=15 sorts by lowest total cost (price + shipping) first.
+def _ebay_search_url(query):
     return f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&_sop=15&LH_BIN=1"
 
-
-def _strip_html(text: str) -> str:
+def _strip_html(text):
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
-
-def _money_to_float(price_text: str):
+def _money_to_float(price_text):
     m = re.search(r"\$\s*([\d,]+(?:\.\d{1,2})?)", price_text or "")
     if not m:
         return None
@@ -170,22 +146,18 @@ def _money_to_float(price_text: str):
     except Exception:
         return None
 
-
-def _extract_ebay_cheapest(html: str) -> dict:
+def _extract_ebay_cheapest(html):
     cards = re.findall(
         r'<li[^>]*class="[^"]*s-item[^"]*"[^>]*>(.*?)</li>',
-        html,
-        re.IGNORECASE | re.DOTALL,
+        html, re.IGNORECASE | re.DOTALL,
     )
     best = None
-
     for block in cards[:30]:
         link_m = re.search(r"class=\"s-item__link\"[^>]*href=\"([^\"]+)\"", block, re.IGNORECASE)
         title_m = re.search(r"class=\"s-item__title\"[^>]*>(.*?)</", block, re.IGNORECASE | re.DOTALL)
         price_m = re.search(r"class=\"s-item__price\"[^>]*>(.*?)</", block, re.IGNORECASE | re.DOTALL)
         if not link_m or not title_m or not price_m:
             continue
-
         title = _strip_html(unescape(title_m.group(1)))
         price = _strip_html(unescape(price_m.group(1)))
         url = unescape(link_m.group(1))
@@ -194,890 +166,358 @@ def _extract_ebay_cheapest(html: str) -> dict:
             continue
         if "shop on ebay" in title.lower() or "results matching fewer words" in title.lower():
             continue
-
         cand = {"title": title, "price": price, "url": url, "store": "eBay", "price_value": value}
         if best is None or cand["price_value"] < best["price_value"]:
             best = cand
-
     if not best:
         return {}
     best.pop("price_value", None)
     return best
 
+# ── JS <-> Python bridge ──────────────────────────────────────────────────────
 
-class CustomScrollbar(tk.Canvas):
-    def __init__(self, parent, command, width=12, track_color=BG, thumb_color=SURFACE2, thumb_active=STEAM):
-        super().__init__(
-            parent,
-            width=width,
-            bg=track_color,
-            highlightthickness=0,
-            bd=0,
-            relief="flat",
-            cursor="hand2",
+class Api:
+    """Methods exposed to JavaScript via window.pywebview.api.*"""
+
+    def __init__(self, overlay):
+        self._ov = overlay
+
+    def open_url(self, url):
+        webbrowser.open(url)
+
+    def get_settings(self):
+        return self._ov.settings
+
+    def save_settings(self, new_settings):
+        self._ov.settings.update(new_settings)
+        _save_settings(self._ov.settings)
+        self._ov._apply_window_settings()
+        return True
+
+    def get_themes(self):
+        return THEMES
+
+    def pick_font_file(self):
+        result = self._ov._window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            file_types=("Font Files (*.ttf;*.otf)",),
         )
-        self._command = command
-        self._track_color = track_color
-        self._thumb_color = thumb_color
-        self._thumb_active = thumb_active
-        self._track_id = self.create_rectangle(0, 0, width, 40, fill=track_color, outline=track_color)
-        self._thumb_parts = [
-            self.create_oval(0, 0, 0, 0, fill=thumb_color, outline=thumb_color),
-            self.create_rectangle(0, 0, 0, 0, fill=thumb_color, outline=thumb_color),
-            self.create_oval(0, 0, 0, 0, fill=thumb_color, outline=thumb_color),
-        ]
-        self._lo = 0.0
-        self._hi = 1.0
-        self._drag_offset = 0
-        self._hover = False
+        if result and len(result) > 0:
+            path = result[0]
+            files = self._ov.settings.setdefault("custom_font_files", [])
+            if path not in files:
+                files.append(path)
+            _save_settings(self._ov.settings)
+            return path
+        return None
 
-        self.bind("<Configure>", self._redraw)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<B1-Motion>", self._on_drag)
-        self.bind("<ButtonRelease-1>", self._on_release)
-        self.bind("<Enter>", lambda _: self._set_hover(True))
-        self.bind("<Leave>", lambda _: self._set_hover(False))
+    def toggle_auto_launch(self, enable):
+        return self._ov._toggle_auto_launch(enable)
 
-    def update_theme(self, track_color, thumb_color, thumb_active):
-        self._track_color = track_color
-        self._thumb_color = thumb_color
-        self._thumb_active = thumb_active
-        self.configure(bg=track_color)
-        self._redraw()
+    def close_overlay(self):
+        if self._ov._close_callback:
+            self._ov._close_callback()
+        else:
+            self._ov._window.destroy()
 
-    def set(self, lo, hi):
-        try:
-            self._lo = max(0.0, min(1.0, float(lo)))
-            self._hi = max(0.0, min(1.0, float(hi)))
-        except Exception:
-            self._lo = 0.0
-            self._hi = 1.0
-        self._redraw()
+    def get_status_colors(self):
+        mode = self._ov.settings.get("theme_mode", "dark")
+        return STATUS_COLORS.get(mode, STATUS_COLORS["dark"])
 
-    def _thumb_bounds(self):
-        w = self.winfo_width() or int(self.cget("width"))
-        h = self.winfo_height() or 1
-        min_len = 28
-        y0 = int(self._lo * h)
-        y1 = int(self._hi * h)
-        thumb_len = y1 - y0
+    def get_system_fonts(self):
+        """Return a sorted list of system font family names."""
+        fonts = set()
+        if sys.platform == "win32":
+            import winreg
+            _style_suffixes = re.compile(
+                r"\s+(Bold|Italic|Oblique|Light|Thin|Medium|SemiBold|Semi Bold|"
+                r"ExtraBold|Extra Bold|ExtraLight|Extra Light|Black|Heavy|"
+                r"Condensed|Narrow|Regular|Book|Demi|DemiBold|Demi Bold|"
+                r"SemiLight|Semi Light|UltraLight|Ultra Light|UltraBold|Ultra Bold)"
+                r"(\s+(Bold|Italic|Oblique|Light|Thin|Medium|Regular|Condensed|Narrow))*$",
+                re.IGNORECASE,
+            )
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts",
+                )
+                i = 0
+                while True:
+                    try:
+                        name, _, _ = winreg.EnumValue(key, i)
+                        # Strip " (TrueType)" etc.
+                        name = name.split(" (TrueType)")[0]
+                        name = name.split(" (OpenType)")[0]
+                        name = name.split(" & ")[0]
+                        # Strip style suffixes to get the family name
+                        family = _style_suffixes.sub("", name).strip()
+                        if family:
+                            fonts.add(family)
+                        i += 1
+                    except OSError:
+                        break
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+        # Add custom font files as well
+        for fp in self._ov.settings.get("custom_font_files", []):
+            fonts.add(os.path.splitext(os.path.basename(fp))[0])
+        # Always include defaults
+        fonts.update(["Bahnschrift", "Segoe UI", "Segoe UI Variable", "Consolas", "Arial", "Cascadia Code"])
+        return sorted(fonts, key=str.lower)
 
-        if thumb_len >= h:
-            return 0, h, w
-
-        # Enforce minimum thumb size while preserving position fidelity.
-        if thumb_len < min_len:
-            center = (y0 + y1) / 2
-            y0 = int(center - min_len / 2)
-            y1 = y0 + min_len
-            if y0 < 0:
-                y0 = 0
-                y1 = min_len
-            if y1 > h:
-                y1 = h
-                y0 = max(0, h - min_len)
-
-        return y0, y1, w
-
-    def _thumb_fill(self):
-        return self._thumb_active if self._hover else self._thumb_color
-
-    def _set_hover(self, state):
-        self._hover = state
-        self._redraw()
-
-    def _redraw(self, _=None):
-        y0, y1, w = self._thumb_bounds()
-        h = self.winfo_height() or 1
-        pad = 3
-        track_l = pad
-        track_r = max(track_l + 2, w - pad)
-        track_t = pad
-        track_b = max(track_t + 2, h - pad)
-        self.coords(self._track_id, track_l, track_t, track_r, track_b)
-        self.itemconfig(self._track_id, fill=self._track_color, outline=self._track_color)
-
-        t_l = track_l + 1
-        t_r = track_r - 1
-        if t_r <= t_l:
-            t_r = t_l + 1
-        radius = max(4, min((t_r - t_l) // 2, 6))
-        y0 = max(track_t, y0)
-        y1 = min(track_b, y1)
-        if y1 - y0 < radius * 2:
-            y1 = y0 + radius * 2
-            if y1 > track_b:
-                y1 = track_b
-                y0 = max(track_t, y1 - radius * 2)
-
-        top_oval, mid_rect, bot_oval = self._thumb_parts
-        fill = self._thumb_fill()
-        self.coords(top_oval, t_l, y0, t_r, y0 + radius * 2)
-        self.coords(mid_rect, t_l, y0 + radius, t_r, y1 - radius)
-        self.coords(bot_oval, t_l, y1 - radius * 2, t_r, y1)
-        for part in self._thumb_parts:
-            self.itemconfig(part, fill=fill, outline=fill)
-
-    def _on_press(self, e):
-        y0, y1, _ = self._thumb_bounds()
-        if y0 <= e.y <= y1:
-            self._drag_offset = e.y - y0
+    def start_native_resize(self, direction):
+        """Spawn a background thread that polls cursor and resizes via SetWindowPos."""
+        if sys.platform != "win32":
             return
-        # Jump thumb toward click position.
-        h = self.winfo_height() or 1
-        thumb_len = max(1, y1 - y0)
-        span = max(1, h - thumb_len)
-        frac = max(0.0, min(1.0, (e.y - thumb_len / 2) / span))
-        self._command("moveto", frac)
+        hwnd = self._ov._get_hwnd()
+        if not hwnd:
+            return
+        threading.Thread(
+            target=self._ov._resize_loop, args=(hwnd, direction), daemon=True
+        ).start()
 
-    def _on_drag(self, e):
-        h = self.winfo_height() or 1
-        y0, y1, _ = self._thumb_bounds()
-        thumb_len = max(1, y1 - y0)
-        span = max(1, h - thumb_len)
-        new_top = max(0, min(h - thumb_len, e.y - self._drag_offset))
-        frac = new_top / span
-        self._command("moveto", frac)
+    def start_native_drag(self):
+        """Spawn a background thread that polls cursor and drags via SetWindowPos."""
+        if sys.platform != "win32":
+            return
+        hwnd = self._ov._get_hwnd()
+        if not hwnd:
+            return
+        threading.Thread(
+            target=self._ov._drag_loop, args=(hwnd,), daemon=True
+        ).start()
 
-    def _on_release(self, _):
-        self._drag_offset = 0
-
-
-class CustomSlider(tk.Canvas):
-    def __init__(self, parent, from_, to, value, command=None, width=220, height=20,
-                 track_color=SURFACE2, fill_color=STEAM, thumb_color=BRIGHT):
-        super().__init__(
-            parent,
-            width=width,
-            height=height,
-            bg=parent.cget("bg") if hasattr(parent, "cget") else BG,
-            highlightthickness=0,
-            bd=0,
-            relief="flat",
-            cursor="hand2",
-        )
-        self._from = float(from_)
-        self._to = float(to)
-        self._value = float(value)
-        self._command = command
-        self._track_color = track_color
-        self._fill_color = fill_color
-        self._thumb_color = thumb_color
-        self._active = False
-
-        self.bind("<Configure>", self._redraw)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<B1-Motion>", self._on_drag)
-        self.bind("<ButtonRelease-1>", self._on_release)
-        self.bind("<Enter>", lambda _: self._set_active(True))
-        self.bind("<Leave>", lambda _: self._set_active(False))
-        self._redraw()
-
-    def set(self, value):
-        self._value = max(self._from, min(self._to, float(value)))
-        self._redraw()
-
-    def get(self):
-        return self._value
-
-    def update_theme(self, track_color, fill_color, thumb_color):
-        self._track_color = track_color
-        self._fill_color = fill_color
-        self._thumb_color = thumb_color
-        self._redraw()
-
-    def _set_active(self, active):
-        self._active = active
-        self._redraw()
-
-    def _value_to_x(self):
-        w = max(20, self.winfo_width())
-        pad = 8
-        span = max(1, w - pad * 2)
-        ratio = (self._value - self._from) / max(0.0001, (self._to - self._from))
-        return pad + ratio * span
-
-    def _x_to_value(self, x):
-        w = max(20, self.winfo_width())
-        pad = 8
-        span = max(1, w - pad * 2)
-        ratio = (max(pad, min(w - pad, x)) - pad) / span
-        return self._from + ratio * (self._to - self._from)
-
-    def _redraw(self, _=None):
-        self.delete("all")
-        w = max(20, self.winfo_width())
-        h = max(16, self.winfo_height())
-        cy = h / 2
-        pad = 8
-        r = 3
-        x0 = pad
-        x1 = w - pad
-        xk = self._value_to_x()
-
-        # Track
-        self.create_line(x0, cy, x1, cy, fill=self._track_color, width=6, capstyle=tk.ROUND)
-        # Fill
-        self.create_line(x0, cy, xk, cy, fill=self._fill_color, width=6, capstyle=tk.ROUND)
-        # Thumb
-        thumb = self._thumb_color if not self._active else self._fill_color
-        self.create_oval(xk - 6, cy - 6, xk + 6, cy + 6, fill=thumb, outline=thumb)
-        self.create_oval(xk - 3, cy - 3, xk + 3, cy + 3, fill=BRIGHT, outline=BRIGHT)
-
-    def _emit(self):
-        if self._command:
-            self._command(self._value)
-
-    def _on_press(self, e):
-        self._value = self._x_to_value(e.x)
-        self._redraw()
-        self._emit()
-
-    def _on_drag(self, e):
-        self._value = self._x_to_value(e.x)
-        self._redraw()
-        self._emit()
-
-    def _on_release(self, _):
-        self._emit()
-
+# ── Overlay class ──────────────────────────────────────────────────────────────
 
 class Overlay:
-    def __init__(self, root: tk.Tk, close_callback=None):
-        self.root = root
-        self._close_callback = close_callback or root.destroy
+    def __init__(self, root=None, close_callback=None):
+        """
+        root is accepted for API compat with SteamScout.pyw but unused.
+        close_callback is invoked when the user clicks X.
+        """
+        self._tk_root = root
+        self._close_callback = close_callback
         self.settings = _load_settings()
-        self._apply_theme_globals()
-        self._font_family = "Bahnschrift"
-        self._render_font_family = "Bahnschrift"
-        self._ui_font_family = "TkDefaultFont"
-        self._registered_font_files = set()
-        self._win_w = int(self.settings.get("window_width", W))
-        self._win_h = int(self.settings.get("window_height", H))
+        self._window = None
         self._last_result = None
-        self._settings_win = None
-        self._settings_canvas = None
-        self._settings_inner = None
-        self._settings_scrollbar = None
-        self._settings_edge_handles = {}
-        self._settings_root_topmost_prev = None
         self._deal_cache = {}
         self._requirements_tab = "minimum"
-        self._setup_window()
-        self._build_chrome()
-        self._drag_x = self._drag_y = 0
-        self._resizing = False
-        self._resize_dir = ""
-        self._resize_x = self._resize_y = 0
-        self._resize_w = self._resize_h = 0
-        self._resize_win_x = self._resize_win_y = 0
-        self._active_wheel_handler = None
-        self._register_custom_fonts_from_settings()
-        self._init_fonts()
-        threading.Thread(target=lambda: asyncio.run(self._ws_loop()), daemon=True).start()
+        self._ready = threading.Event()
+        self._hwnd = None
 
-    def _fz(self, size: int) -> int:
-        scale = float(self.settings.get("font_scale", 1.0))
-        return max(8, int(round(size * scale)))
+    # ── Public API (called from SteamScout.pyw) ────────────────────────────
 
-    def _init_fonts(self):
-        available = set(tkfont.families(self.root))
-        pref = self.settings.get("font_family", "Bahnschrift")
-        candidates = [
-            pref,
-            "Bahnschrift",
-            "Segoe UI Variable",
-            "Segoe UI",
-            "Trebuchet MS",
-            "Verdana",
-        ]
-        for fam in candidates:
-            if fam in available:
-                self._font_family = fam
-                break
-        else:
-            self._font_family = "TkDefaultFont"
+    def start(self):
+        """Create the pywebview window and start the WS listener. Blocks."""
+        api = Api(self)
+        w = int(self.settings.get("window_width", 520))
+        h = int(self.settings.get("window_height", 260))
 
-        ui_candidates = ["Segoe UI Variable", "Segoe UI", "Bahnschrift", "Verdana", "TkDefaultFont"]
-        self._ui_font_family = next((f for f in ui_candidates if f in available), "TkDefaultFont")
+        self._window = webview.create_window(
+            "SteamScout",
+            url=_ui_path(),
+            js_api=api,
+            width=w,
+            height=h,
+            x=40, y=40,
+            resizable=True,
+            frameless=True,
+            easy_drag=False,
+            on_top=bool(self.settings.get("always_on_top", True)),
+            transparent=False,
+            min_size=(460, 180),
+        )
+        self._window.events.loaded += self._on_dom_ready
+        self._window.events.closing += self._on_closing
+        self._window.events.resized += self._on_resized
 
-        # Some decorative fonts can break vertical alignment in tight UI controls.
-        # Keep selection saved, but render with a safe fallback when metrics are extreme.
-        self._render_font_family = self._font_family
+        threading.Thread(target=self._ws_thread, daemon=True).start()
+        webview.start(debug=False)
+
+    def show(self):
+        if self._window:
+            self._window.show()
+
+    def hide(self):
+        if self._window:
+            self._window.hide()
+
+    # ── Window events ──────────────────────────────────────────────────────
+
+    def _get_hwnd(self):
+        """Get native Win32 HWND, cached after first lookup."""
+        if self._hwnd:
+            return self._hwnd
+        hwnd = _user32.FindWindowW(None, "SteamScout")
+        if not hwnd:
+            hwnd = _user32.GetForegroundWindow()
+        if hwnd:
+            self._hwnd = hwnd
+        return hwnd
+
+    def _resize_loop(self, hwnd, direction):
+        """Poll cursor position and resize window via SetWindowPos until mouse released."""
         try:
-            probe = tkfont.Font(self.root, family=self._font_family, size=10)
-            linespace = int(probe.metrics("linespace"))
-            ascent = int(probe.metrics("ascent"))
-            descent = int(probe.metrics("descent"))
-            if linespace < 9 or linespace > 20 or ascent <= 0 or descent < 0:
-                self._render_font_family = self._ui_font_family
-        except Exception:
-            self._render_font_family = self._ui_font_family
+            rect = ctypes.wintypes.RECT()
+            pt = ctypes.wintypes.POINT()
+            _user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            _user32.GetCursorPos(ctypes.byref(pt))
+            sx, sy = pt.x, pt.y
+            ol, ot, oright, ob = rect.left, rect.top, rect.right, rect.bottom
 
-    def _register_font_file(self, font_path: str):
-        if not font_path or not os.path.exists(font_path):
-            return []
-        if font_path in self._registered_font_files:
-            return []
+            time.sleep(0.01)
+            while _user32.GetAsyncKeyState(_VK_LBUTTON) & 0x8000:
+                _user32.GetCursorPos(ctypes.byref(pt))
+                dx, dy = pt.x - sx, pt.y - sy
+                nl, nt, nr, nb = ol, ot, oright, ob
+                if "e" in direction:
+                    nr = max(ol + _MIN_W, oright + dx)
+                if "s" in direction:
+                    nb = max(ot + _MIN_H, ob + dy)
+                if "w" in direction:
+                    nl = min(oright - _MIN_W, ol + dx)
+                if "n" in direction:
+                    nt = min(ob - _MIN_H, ot + dy)
+                _user32.SetWindowPos(
+                    hwnd, None, nl, nt, nr - nl, nb - nt,
+                    _SWP_NOZORDER | _SWP_NOACTIVATE,
+                )
+                time.sleep(0.016)
 
-        before = set(tkfont.families(self.root))
-        try:
-            if os.name == "nt":
-                import ctypes
-
-                FR_PRIVATE = 0x10
-                added = ctypes.windll.gdi32.AddFontResourceExW(font_path, FR_PRIVATE, 0)
-                if added <= 0:
-                    return []
-            else:
-                return []
-        except Exception:
-            return []
-
-        self._registered_font_files.add(font_path)
-        self.root.update_idletasks()
-        after = set(tkfont.families(self.root))
-        return sorted(after - before)
-
-    def _register_custom_fonts_from_settings(self):
-        files = self.settings.get("custom_font_files", [])
-        if not isinstance(files, list):
-            return
-        for p in files:
-            try:
-                self._register_font_file(p)
-            except Exception:
-                continue
-
-    def _font(self, size: int, weight: str = "normal"):
-        return (self._render_font_family, self._fz(size), weight)
-
-    def _ui_font(self, size: int, weight: str = "normal"):
-        return (self._ui_font_family, self._fz(size), weight)
-
-    def _ensure_ttk_styles(self):
-        style = ttk.Style(self.root)
-        try:
-            style.theme_use("clam")
+            _user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            self.settings["window_width"] = rect.right - rect.left
+            self.settings["window_height"] = rect.bottom - rect.top
+            _save_settings(self.settings)
         except Exception:
             pass
-        style.configure(
-            "SteamScout.Horizontal.TScale",
-            background=SURFACE,
-            troughcolor=SURFACE2,
-            bordercolor=BORDER,
-            lightcolor=SURFACE,
-            darkcolor=SURFACE,
-        )
 
-    def _rgb_to_hex(self, r: int, g: int, b: int) -> str:
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    def _hex_to_rgb(self, value: str):
-        s = (value or "").strip().lstrip("#")
-        if len(s) != 6:
-            return None
+    def _drag_loop(self, hwnd):
+        """Poll cursor position and move window via SetWindowPos until mouse released."""
         try:
-            return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
-        except Exception:
-            return None
+            rect = ctypes.wintypes.RECT()
+            pt = ctypes.wintypes.POINT()
+            _user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            _user32.GetCursorPos(ctypes.byref(pt))
+            sx, sy = pt.x, pt.y
+            ox, oy = rect.left, rect.top
 
-    def _apply_theme_globals(self):
-        global BG, SURFACE, SURFACE2, BORDER, TEXT, DIM, BRIGHT, STEAM
+            time.sleep(0.01)
+            while _user32.GetAsyncKeyState(_VK_LBUTTON) & 0x8000:
+                _user32.GetCursorPos(ctypes.byref(pt))
+                _user32.SetWindowPos(
+                    hwnd, None,
+                    ox + (pt.x - sx), oy + (pt.y - sy), 0, 0,
+                    _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_NOSIZE,
+                )
+                time.sleep(0.016)
+        except Exception:
+            pass
+
+    def _on_dom_ready(self):
+        self._ready.set()
+        self._push_settings()
+        if self._last_result:
+            self._push_to_js("showResult", self._last_result)
+        else:
+            self._push_to_js("showIdle")
+
+    def _on_closing(self):
+        if self._window:
+            try:
+                self.settings["window_width"] = self._window.width
+                self.settings["window_height"] = self._window.height
+            except Exception:
+                pass
+            _save_settings(self.settings)
+
+    def _on_resized(self, width, height):
+        self.settings["window_width"] = width
+        self.settings["window_height"] = height
+        _save_settings(self.settings)
+
+    def _apply_window_settings(self):
+        if not self._window:
+            return
+        try:
+            self._window.on_top = bool(self.settings.get("always_on_top", True))
+        except Exception:
+            pass
+        self._push_settings()
+
+    def _push_settings(self):
         mode = self.settings.get("theme_mode", "dark")
         colors = dict(THEMES.get(mode, THEMES["dark"]))
         colors.update(self.settings.get("custom_colors", {}))
-        BG = colors["BG"]
-        SURFACE = colors["SURFACE"]
-        SURFACE2 = colors["SURFACE2"]
-        BORDER = colors["BORDER"]
-        TEXT = colors["TEXT"]
-        DIM = colors["DIM"]
-        BRIGHT = colors["BRIGHT"]
-        STEAM = colors["STEAM"]
+        sc = STATUS_COLORS.get(mode, STATUS_COLORS["dark"])
+        self._push_to_js("applySettings", {
+            **self.settings,
+            "colors": colors,
+            "status_colors": sc,
+        })
 
-    # ── Window ────────────────────────────────────────────────────────────────
-
-    def _setup_window(self):
-        self.root.title("SteamScout")
-        self.root.overrideredirect(True)
-        self.root.attributes("-topmost", bool(self.settings.get("always_on_top", True)))
-        self.root.attributes("-alpha", float(self.settings.get("opacity", 0.96)))
-        self.root.configure(bg=BORDER)
-        self.root.geometry(f"{self._win_w}x{self._win_h}+40+40")
-
-    def _drag_start(self, e):
-        self._drag_x = e.x_root - self.root.winfo_x()
-        self._drag_y = e.y_root - self.root.winfo_y()
-
-    def _drag_move(self, e):
-        self.root.geometry(f"+{e.x_root - self._drag_x}+{e.y_root - self._drag_y}")
-
-    def _pos(self):
-        g = self.root.geometry().replace("x", "+").split("+")
-        return g[2], g[3]
-
-    def _resize(self):
-        h = self._win_h
-        x, y = self._pos()
-        self.root.geometry(f"{self._win_w}x{h}+{x}+{y}")
-
-    # ── Chrome frame ──────────────────────────────────────────────────────────
-
-    def _build_chrome(self):
-        self._inner = tk.Frame(self.root, bg=BG, padx=12, pady=8)
-        self._inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-
-        # Title bar
-        bar = tk.Frame(self._inner, bg=BG)
-        bar.pack(fill=tk.X)
-        bar.bind("<ButtonPress-1>", self._drag_start)
-        bar.bind("<B1-Motion>", self._drag_move)
-
-        tk.Label(bar, text="◆ STEAMSCOUT", bg=BG, fg=STEAM,
-               font=self._font(11, "bold")).pack(side=tk.LEFT)
-
-        self._settings_btn = tk.Label(bar, text="  ⚙  ", bg=BG, fg=DIM,
-                          font=self._font(11), cursor="hand2")
-        self._settings_btn.pack(side=tk.RIGHT)
-        self._settings_btn.bind("<Button-1>", lambda _: self.open_settings())
-        self._settings_btn.bind("<Enter>",    lambda _: self._settings_btn.config(fg=STEAM))
-        self._settings_btn.bind("<Leave>",    lambda _: self._settings_btn.config(fg=DIM))
-
-        self._close = tk.Label(bar, text="  ✕  ", bg=BG, fg=DIM,
-                                font=self._font(11), cursor="hand2")
-        self._close.pack(side=tk.RIGHT)
-        self._close.bind("<Button-1>", lambda _: self._close_callback())
-        self._close.bind("<Enter>",    lambda _: self._close.config(fg=RED))
-        self._close.bind("<Leave>",    lambda _: self._close.config(fg=DIM))
-
-        # Status line
-        self._status = tk.Label(self._inner, text="Waiting for Steam game page...",
-                                 bg=BG, fg=DIM, font=self._font(10), anchor="w")
-        self._status.pack(fill=tk.X, pady=(4, 0))
-
-        # Scrollable dynamic content area
-        self._scroll_host = tk.Frame(self._inner, bg=BG)
-        self._scroll_host.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-
-        self._scroll_canvas = tk.Canvas(self._scroll_host, bg=BG, highlightthickness=0, bd=0)
-        self._scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self._scrollbar = CustomScrollbar(
-            self._scroll_host,
-            command=self._scroll_canvas.yview,
-            width=12,
-            track_color=BG,
-            thumb_color=SURFACE2,
-            thumb_active=STEAM,
-        )
-        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self._scroll_canvas.configure(yscrollcommand=self._scrollbar.set)
-
-        self._content = tk.Frame(self._scroll_canvas, bg=BG)
-        self._content_window = self._scroll_canvas.create_window((0, 0), window=self._content, anchor="nw")
-        self._content.bind("<Configure>", self._on_content_configure)
-        self._scroll_canvas.bind("<Configure>", self._on_canvas_configure)
-        self._bind_wheel_to_widget(self._scroll_canvas, self._on_main_mousewheel)
-        self._bind_wheel_to_widget(self._content, self._on_main_mousewheel)
-
-        self._build_edge_resize_handles()
-
-    def _build_edge_resize_handles(self):
-        # Use transparent hit-zones so borderless window can resize from all edges/corners.
-        self._edge_handles = {}
-        s = EDGE_RESIZE_SIZE
-        specs = {
-            "n":  {"x": s, "y": 0, "relwidth": 1.0, "width": -2 * s, "height": s, "cursor": "size_ns"},
-            "s":  {"x": s, "rely": 1.0, "y": -s, "relwidth": 1.0, "width": -2 * s, "height": s, "cursor": "size_ns"},
-            "w":  {"x": 0, "y": s, "width": s, "relheight": 1.0, "height": -2 * s, "cursor": "size_we"},
-            "e":  {"relx": 1.0, "x": -s, "y": s, "width": s, "relheight": 1.0, "height": -2 * s, "cursor": "size_we"},
-            "nw": {"x": 0, "y": 0, "width": s, "height": s, "cursor": "size_nw_se"},
-            "ne": {"relx": 1.0, "x": -s, "y": 0, "width": s, "height": s, "cursor": "size_ne_sw"},
-            "sw": {"x": 0, "rely": 1.0, "y": -s, "width": s, "height": s, "cursor": "size_ne_sw"},
-            "se": {"relx": 1.0, "rely": 1.0, "x": -s, "y": -s, "width": s, "height": s, "cursor": "size_nw_se"},
-        }
-
-        for direction, place_opts in specs.items():
-            cursor = place_opts["cursor"]
-            geom_opts = {k: v for k, v in place_opts.items() if k != "cursor"}
-            handle = tk.Frame(self.root, bg=BORDER, highlightthickness=0, bd=0, cursor=cursor)
-            handle.place(**geom_opts)
-            handle.bind("<ButtonPress-1>", lambda e, d=direction: self._resize_start(e, d))
-            handle.bind("<B1-Motion>", self._resize_move)
-            handle.bind("<ButtonRelease-1>", self._resize_end)
-            self._edge_handles[direction] = handle
-
-    def _resize_start(self, e, direction):
-        self._resizing = True
-        self._resize_dir = direction
-        self._resize_x = e.x_root
-        self._resize_y = e.y_root
-        self._resize_w = self.root.winfo_width()
-        self._resize_h = self.root.winfo_height()
-        self._resize_win_x = self.root.winfo_x()
-        self._resize_win_y = self.root.winfo_y()
-
-    def _resize_move(self, e):
-        if not self._resizing:
+    def _push_to_js(self, fn_name, *args):
+        if not self._window or not self._ready.is_set():
             return
-        dw = e.x_root - self._resize_x
-        dh = e.y_root - self._resize_y
-        direction = self._resize_dir
+        try:
+            args_json = ", ".join(json.dumps(a) for a in args)
+            self._window.evaluate_js(f"window.SS.{fn_name}({args_json})")
+        except Exception:
+            pass
 
-        new_x = self._resize_win_x
-        new_y = self._resize_win_y
-        new_w = self._resize_w
-        new_h = self._resize_h
+    # ── WebSocket ──────────────────────────────────────────────────────────
 
-        if "e" in direction:
-            new_w = max(MIN_W, self._resize_w + dw)
-        if "s" in direction:
-            new_h = max(MIN_H, self._resize_h + dh)
-        if "w" in direction:
-            raw_w = self._resize_w - dw
-            new_w = max(MIN_W, raw_w)
-            new_x = self._resize_win_x + (self._resize_w - new_w)
-        if "n" in direction:
-            raw_h = self._resize_h - dh
-            new_h = max(MIN_H, raw_h)
-            new_y = self._resize_win_y + (self._resize_h - new_h)
+    def _ws_thread(self):
+        asyncio.run(self._ws_loop())
 
-        self._win_w = int(new_w)
-        self._win_h = int(new_h)
-        self.root.geometry(f"{self._win_w}x{self._win_h}+{int(new_x)}+{int(new_y)}")
+    async def _ws_loop(self):
+        backoff = 1
+        while True:
+            try:
+                async with websockets.connect(WS_URL) as ws:
+                    backoff = 1  # reset on successful connect
+                    self._ready.wait()
+                    self._push_to_js("showIdle")
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        self._dispatch(msg)
+            except Exception:
+                self._ready.wait()
+                self._push_to_js("showConnecting")
+                await asyncio.sleep(min(backoff, 10))
+                backoff = min(backoff * 2, 10)
 
-    def _resize_end(self, _):
-        self._resizing = False
-        self._resize_dir = ""
-        self.settings["window_width"] = int(self._win_w)
-        self.settings["window_height"] = int(self._win_h)
-        _save_settings(self.settings)
+    def _dispatch(self, msg):
+        try:
+            t = msg.get("type")
+            if t == "idle":
+                self._push_to_js("showIdle")
+            elif t == "loading":
+                self._push_to_js("showLoading", msg.get("app_id", 0), msg.get("section", ""))
+            elif t == "result":
+                self._process_result(msg)
+            elif t == "error":
+                self._push_to_js("showError", msg.get("app_id", 0), msg.get("section", ""), msg.get("msg", ""))
+            elif t == "warning":
+                self._push_to_js("showWarning", msg.get("msg", ""))
+        except Exception:
+            pass
 
-    def _on_content_configure(self, _):
-        self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+    # ── Result processing ──────────────────────────────────────────────────
 
-    def _on_canvas_configure(self, e):
-        self._scroll_canvas.itemconfig(self._content_window, width=e.width)
+    def _process_result(self, data):
+        try:
+            self._last_result = data
+            compat = data.get("compat", {})
+            if not compat.get("performance"):
+                compat["performance"] = self._fallback_performance(compat)
+            self._prefetch_upgrade_deals(data)
+            self._push_to_js("showResult", data)
+        except Exception:
+            pass
 
-    def _on_main_mousewheel(self, e):
-        if getattr(e, "num", None) == 4:
-            self._scroll_canvas.yview_scroll(-3, "units")
-            return
-        if getattr(e, "num", None) == 5:
-            self._scroll_canvas.yview_scroll(3, "units")
-            return
-        delta = int(-1 * (e.delta / 120)) if getattr(e, "delta", 0) else 0
-        if delta:
-            self._scroll_canvas.yview_scroll(delta, "units")
-
-    def _on_global_mousewheel(self, e):
-        if self._active_wheel_handler:
-            self._active_wheel_handler(e)
-
-    def _activate_wheel(self, handler):
-        self._active_wheel_handler = handler
-        self.root.bind_all("<MouseWheel>", self._on_global_mousewheel)
-        self.root.bind_all("<Button-4>", self._on_global_mousewheel)
-        self.root.bind_all("<Button-5>", self._on_global_mousewheel)
-
-    def _deactivate_wheel(self, handler):
-        if self._active_wheel_handler is handler:
-            self._active_wheel_handler = None
-            self.root.unbind_all("<MouseWheel>")
-            self.root.unbind_all("<Button-4>")
-            self.root.unbind_all("<Button-5>")
-
-    def _bind_wheel_to_widget(self, widget, handler):
-        widget.bind("<Enter>", lambda _: self._activate_wheel(handler))
-        widget.bind("<Leave>", lambda _: self._deactivate_wheel(handler))
-
-    # ── State handlers ────────────────────────────────────────────────────────
-
-    def _clear(self):
-        for w in self._content.winfo_children():
-            w.destroy()
-        self._scroll_canvas.yview_moveto(0)
-
-    def show_idle(self):
-        self._clear()
-        self._status.config(text="Watching Steam — navigate to a game page...", fg=DIM)
-        self._resize()
-
-    def show_connecting(self):
-        self._clear()
-        self._status.config(text="⟳  Connecting to backend...", fg=DIM)
-        self._resize()
-
-    def show_loading(self, app_id: int, section: str):
-        self._clear()
-        icon = SECTION_ICONS.get(section, "")
-        self._status.config(text=f"⟳  {icon} Looking up AppID {app_id} ({section})...", fg=BLUE)
-        self._resize()
-
-    def show_error(self, app_id: int, section: str, msg: str):
-        self._clear()
-        self._status.config(text=f"⚠  AppID {app_id}: {msg}", fg=YELLOW)
-        self._resize()
-
-    def show_warning(self, msg: str):
-        self._clear()
-        self._status.config(text=f"⚠  {msg}", fg=YELLOW)
-        self._resize()
-
-    def show_result(self, data: dict):
-        self._last_result = data
-        reqs   = data["reqs"]
-        compat = data["compat"]
-        section = data.get("section", "")
-        icon    = SECTION_ICONS.get(section, "")
-        name    = reqs.get("name", f"AppID {data['app_id']}")
-
-        self._status.config(
-            text=f"{icon}  {name}  —  {section}",
-            fg=DIM
-        )
-
-        self._clear()
-
-        # Overall badges
-        badges = tk.Frame(self._content, bg=BG)
-        badges.pack(fill=tk.X, pady=(0, 6))
-
-        for key, label in [("overall_min", "MINIMUM"), ("overall_rec", "RECOMMENDED")]:
-            status = compat.get(key, "unknown")
-            color, text = OVERALL.get(status, (DIM, "UNKNOWN"))
-            col = tk.Frame(badges, bg=BG)
-            col.pack(side=tk.LEFT, padx=(0, 16))
-            tk.Label(col, text=label, bg=BG, fg=DIM,
-                     font=self._font(9)).pack(anchor="w")
-            tk.Label(col, text=text, bg=BG, fg=color,
-                     font=self._font(12, "bold")).pack(anchor="w")
-
-        # Divider
-        tk.Frame(self._content, bg=BORDER, height=1).pack(fill=tk.X, pady=(0, 5))
-
-        tabs = tk.Frame(self._content, bg=BG)
-        tabs.pack(fill=tk.X, pady=(0, 6))
-
-        min_btn = tk.Label(tabs, text="MINIMUM", bg=SURFACE2, fg=TEXT,
-                           font=self._font(9, "bold"), padx=10, pady=4, cursor="hand2")
-        rec_btn = tk.Label(tabs, text="RECOMMENDED", bg=SURFACE2, fg=TEXT,
-                           font=self._font(9, "bold"), padx=10, pady=4, cursor="hand2")
-        min_btn.pack(side=tk.LEFT, padx=(0, 6))
-        rec_btn.pack(side=tk.LEFT)
-
-        details = tk.Frame(self._content, bg=BG)
-        details.pack(fill=tk.X)
-
-        if self._requirements_tab not in {"minimum", "recommended"}:
-            self._requirements_tab = "minimum"
-
-        def _render_tab(tab_name: str):
-            self._requirements_tab = tab_name
-            if tab_name == "minimum":
-                min_btn.config(bg=STEAM, fg=BRIGHT)
-                rec_btn.config(bg=SURFACE2, fg=TEXT)
-            else:
-                rec_btn.config(bg=STEAM, fg=BRIGHT)
-                min_btn.config(bg=SURFACE2, fg=TEXT)
-
-            for w in details.winfo_children():
-                w.destroy()
-
-            ORDER = ["ram", "os", "cpu", "gpu", "directx", "storage"]
-            tier_data = compat.get(tab_name, {})
-            shown_rows = []
-
-            for key in ORDER:
-                row_data = tier_data.get(key)
-                if not row_data:
-                    continue
-                label = key.upper() if key in ("cpu", "gpu", "os", "ram") else key.capitalize()
-                shown_rows.append((key, row_data))
-                self._spec_row(details, key, label, row_data, tab_name)
-
-            self._prefetch_upgrade_deals(shown_rows)
-            perf = compat.get("performance") or self._fallback_performance(compat)
-            self._performance_block(perf, parent=details)
-            self._build_summary_and_upgrades(shown_rows, tab_name, parent=details)
-
-        min_btn.bind("<Button-1>", lambda _: _render_tab("minimum"))
-        rec_btn.bind("<Button-1>", lambda _: _render_tab("recommended"))
-        _render_tab(self._requirements_tab)
-
-        self._resize()
-
-    def _spec_row(self, parent, key: str, label: str, data: dict, tier_name: str):
-        status = (data or {}).get("status", "unknown")
-        color, bg, icon = STATUS.get(status, STATUS["info"])
-
-        row = tk.Frame(parent, bg=bg, padx=8, pady=6)
-        row.pack(fill=tk.X, pady=3)
-
-        head = tk.Frame(row, bg=bg)
-        head.pack(fill=tk.X)
-        tk.Label(head, text=f"{icon}  {label}", bg=bg, fg=color,
-                 font=self._font(11, "bold"), anchor="w").pack(side=tk.LEFT)
-        tier_text = "MINIMUM" if tier_name == "minimum" else "RECOMMENDED"
-        tk.Label(head, text=f"{tier_text}  {STATUS_TEXT.get(status, 'UNKNOWN')}", bg=bg, fg=color,
-                 font=self._font(9, "bold"), anchor="e").pack(side=tk.RIGHT)
-
-        wrap = max(280, self._win_w - 80)
-        yours = (data or {}).get("yours", "—")
-        req = (data or {}).get("required", "")
-
-        tk.Label(
-            row,
-            text=f"Your PC: {yours}",
-            bg=bg,
-            fg=BRIGHT,
-            font=self._font(10),
-            anchor="w",
-            justify="left",
-            wraplength=wrap,
-        ).pack(fill=tk.X, pady=(4, 0))
-
-        if req:
-            tk.Label(
-                row,
-                text=f"Required: {req}",
-                bg=bg,
-                fg=DIM,
-                font=self._font(10),
-                anchor="w",
-                justify="left",
-                wraplength=wrap,
-            ).pack(fill=tk.X, pady=(2, 0))
-
-    def _build_summary_and_upgrades(self, shown_rows, tier_name: str, parent=None):
-        target = parent or self._content
-        measurable = {"ram", "os", "storage"}
-        auto_rows = [(k, d) for (k, d) in shown_rows if k in measurable and d.get("status") in ("pass", "fail")]
-        met = sum(1 for _, d in auto_rows if d.get("status") == "pass")
-        total = len(auto_rows)
-
-        if total:
-            tier_label = "Minimum" if tier_name == "minimum" else "Recommended"
-            summary = tk.Label(
-                target,
-                text=f"{tier_label} auto-checked requirements met: {met}/{total}",
-                bg=BG,
-                fg=DIM,
-                font=self._font(10),
-                anchor="w",
-            )
-            summary.pack(fill=tk.X, pady=(6, 2))
-
-        upgrade_rows = []
-        for key, data in shown_rows:
-            status = data.get("status", "unknown")
-            if key in {"ram", "cpu", "gpu", "storage"} and status == "fail":
-                reason = "Below minimum" if tier_name == "minimum" else "Below recommended"
-                upgrade_rows.append((key, data.get("required", ""), reason))
-
-        if not upgrade_rows:
-            return
-
-        tk.Frame(target, bg=BORDER, height=1).pack(fill=tk.X, pady=(6, 5))
-        tk.Label(target, text="Upgrade Options", bg=BG, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-        tk.Label(target, text="Click a suggestion to find compatible parts.", bg=BG, fg=DIM,
-                 font=self._font(9), anchor="w").pack(fill=tk.X)
-
-        for key, required, reason in upgrade_rows:
-            part = self._part_name(key)
-            need = required or "See game requirement"
-            query = self._upgrade_query(key, required)
-            deal = self._deal_cache.get(query, {})
-            fallback_url = _ebay_search_url(query)
-            open_url = deal.get("url") or fallback_url
-
-            tk.Label(
-                target,
-                text=f"{part}: {reason} (target: {need})",
-                bg=BG,
-                fg=TEXT,
-                font=self._font(10),
-                anchor="w",
-            ).pack(fill=tk.X, pady=(4, 0))
-
-            if deal.get("loading"):
-                btn_text = f"Finding cheapest {part}..."
-            elif deal.get("price"):
-                btn_text = f"Find Cheapest Online ({deal['price']})"
-            else:
-                btn_text = "Find Cheapest Online"
-
-            tk.Button(
-                target,
-                text=btn_text,
-                command=lambda link=open_url: webbrowser.open(link),
-                bg=SURFACE2,
-                fg=TEXT,
-                activebackground=SURFACE,
-                activeforeground=BRIGHT,
-                relief="flat",
-                font=self._font(10),
-                cursor="hand2",
-                padx=8,
-                pady=2,
-            ).pack(anchor="w", pady=(3, 0))
-
-            if deal.get("title") and not deal.get("loading"):
-                title = deal["title"]
-                if len(title) > 54:
-                    title = title[:53] + "..."
-                tk.Label(
-                    target,
-                    text=f"{deal.get('store', 'Store')}: {title}",
-                    bg=BG,
-                    fg=DIM,
-                    font=self._font(9),
-                    anchor="w",
-                ).pack(fill=tk.X)
-
-    def _performance_block(self, perf: dict, parent=None):
-        if not perf:
-            return
-        target = parent or self._content
-
-        tk.Frame(target, bg=BORDER, height=1).pack(fill=tk.X, pady=(8, 5))
-        tk.Label(target, text="Estimated Performance", bg=BG, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-
-        model = perf.get("model", "Heuristic")
-        score = perf.get("score")
-        if score is not None:
-            tk.Label(target, text=f"Model: {model}  |  Score: {score}", bg=BG, fg=DIM,
-                     font=self._font(9), anchor="w").pack(fill=tk.X)
-        else:
-            tk.Label(target, text=f"Model: {model}", bg=BG, fg=DIM,
-                     font=self._font(9), anchor="w").pack(fill=tk.X)
-
-        conf = perf.get("confidence", "low").upper()
-        note = perf.get("note", "")
-        tk.Label(target, text=f"Confidence: {conf}", bg=BG, fg=DIM,
-                 font=self._font(9), anchor="w").pack(fill=tk.X)
-        if note:
-            tk.Label(target, text=note, bg=BG, fg=TEXT,
-                     font=self._font(9), anchor="w", justify="left", wraplength=max(320, self._win_w - 80)).pack(fill=tk.X, pady=(1, 3))
-
-        presets = perf.get("presets", {})
-        for level in ("low", "medium", "high"):
-            fps = presets.get(level)
-            if not fps:
-                continue
-            tk.Label(
-                target,
-                text=f"{level.capitalize()} settings: {fps}",
-                bg=BG,
-                fg=BRIGHT,
-                font=self._font(10),
-                anchor="w",
-            ).pack(fill=tk.X)
-
-    def _fallback_performance(self, compat: dict) -> dict:
+    def _fallback_performance(self, compat):
         min_ok = compat.get("overall_min")
         rec_ok = compat.get("overall_rec")
         if min_ok == "fail":
@@ -1085,6 +525,12 @@ class Overlay:
                 "confidence": "medium",
                 "note": "Below minimum requirements; expect low FPS.",
                 "presets": {"low": "<30 FPS", "medium": "Not recommended", "high": "Not playable"},
+            }
+        if min_ok == "pass" and rec_ok == "unavailable":
+            return {
+                "confidence": "low",
+                "note": "Only minimum requirements available; estimate less precise.",
+                "presets": {"low": "50-80 FPS", "medium": "35-60 FPS", "high": "25-45 FPS"},
             }
         if min_ok == "pass" and rec_ok == "fail":
             return {
@@ -1104,32 +550,25 @@ class Overlay:
             "presets": {"low": "Unknown", "medium": "Unknown", "high": "Unknown"},
         }
 
-    def _prefetch_upgrade_deals(self, shown_rows):
-        for key, data in shown_rows:
-            if key not in {"ram", "cpu", "gpu", "storage"}:
-                continue
-            if data.get("status") != "fail":
-                continue
+    def _prefetch_upgrade_deals(self, data):
+        compat = data.get("compat", {})
+        for tier in ("minimum", "recommended"):
+            tier_data = compat.get(tier, {})
+            for key in ("ram", "cpu", "gpu", "storage"):
+                row = tier_data.get(key)
+                if not row or row.get("status") != "fail":
+                    continue
+                required = row.get("required", "")
+                query = self._upgrade_query(key, required)
+                if query in self._deal_cache:
+                    continue
+                self._deal_cache[query] = {"loading": True, "url": _ebay_search_url(query)}
+                threading.Thread(target=self._fetch_deal, args=(query,), daemon=True).start()
 
-            required = data.get("required", "")
-            query = self._upgrade_query(key, required)
-            if query in self._deal_cache:
-                continue
-
-            self._deal_cache[query] = {
-                "loading": True,
-                "url": _ebay_search_url(query),
-                "title": "",
-                "price": "",
-                "store": "eBay",
-            }
-            threading.Thread(target=self._fetch_deal_for_query, args=(query,), daemon=True).start()
-
-    def _fetch_deal_for_query(self, query: str):
+    def _fetch_deal(self, query):
         url = _ebay_search_url(query)
         headers = {"User-Agent": "Mozilla/5.0"}
         deal = {"loading": False, "url": url, "title": "", "price": "", "store": "eBay"}
-
         try:
             r = requests.get(url, headers=headers, timeout=10)
             if r.ok:
@@ -1138,113 +577,77 @@ class Overlay:
                     deal.update(parsed)
         except Exception:
             pass
-
         self._deal_cache[query] = deal
         if self._last_result:
-            self.root.after(0, lambda: self.show_result(self._last_result))
+            self._push_deals()
 
-    def _part_name(self, key: str) -> str:
-        return {
-            "ram": "RAM",
-            "cpu": "CPU",
-            "gpu": "GPU",
-            "storage": "Storage",
-        }.get(key, key.upper())
+    def _push_deals(self):
+        self._push_to_js("updateDeals", self._deal_cache)
 
-    def _is_vague_requirement(self, key: str, required: str) -> bool:
+    # ── Upgrade query logic ────────────────────────────────────────────────
+
+    def _is_vague_requirement(self, key, required):
         s = (required or "").strip().lower()
         if not s:
             return True
-
-        # Requirement text that is not a concrete purchasable model/capacity.
-        vague_markers = [
-            "hardware accelerated",
-            "dedicated memory",
-            "compatible",
-            "or better",
-            "equivalent",
-            "support",
-            "shader",
-            "feature level",
-            "dx",
-            "directx",
-            "intel hd",
-            "integrated graphics",
-            "see notes",
-            "tbd",
-            "unknown",
+        vague = [
+            "hardware accelerated", "dedicated memory", "compatible",
+            "or better", "equivalent", "support", "shader", "feature level",
+            "dx", "directx", "intel hd", "integrated graphics",
+            "see notes", "tbd", "unknown",
         ]
-        if any(m in s for m in vague_markers):
+        if any(m in s for m in vague):
             return True
-
         if key in {"ram", "storage"} and not re.search(r"\b\d+(?:\.\d+)?\s*(tb|gb|mb)\b", s, re.IGNORECASE):
             return True
-
         return False
 
-    def _extract_size_gb(self, text: str):
+    def _extract_size_gb(self, text):
         m = re.search(r"(\d+(?:\.\d+)?)\s*(tb|gb|mb)\b", text or "", re.IGNORECASE)
         if not m:
             return None
         value = float(m.group(1))
         unit = m.group(2).lower()
-        if unit == "tb":
-            return int(round(value * 1024))
-        if unit == "mb":
-            return max(1, int(round(value / 1024)))
+        if unit == "tb": return int(round(value * 1024))
+        if unit == "mb": return max(1, int(round(value / 1024)))
         return int(round(value))
 
-    def _upgrade_query(self, key: str, required: str) -> str:
+    def _upgrade_query(self, key, required):
         required = re.sub(r"\s+", " ", (required or "").strip())
         mode = self.settings.get("upgrade_query_mode", "specific")
         vague = self._is_vague_requirement(key, required)
-
         if key == "ram":
-            if mode == "general":
-                return "gaming PC RAM upgrade"
+            if mode == "general": return "gaming PC RAM upgrade"
             size_gb = self._extract_size_gb(required)
-            if size_gb:
-                return f"buy {size_gb}GB desktop RAM DDR4 or DDR5"
-            if vague:
-                return "desktop gaming RAM upgrade kit"
+            if size_gb: return f"buy {size_gb}GB desktop RAM DDR4 or DDR5"
+            if vague: return "desktop gaming RAM upgrade kit"
             return f"buy {required} desktop RAM"
-
         if key == "storage":
-            if mode == "general":
-                return "gaming PC SSD storage upgrade"
+            if mode == "general": return "gaming PC SSD storage upgrade"
             size_gb = self._extract_size_gb(required)
-            drive_kind = "SSD" if "ssd" in required.lower() or "nvme" in required.lower() else "drive"
-            if size_gb:
-                return f"buy {size_gb}GB {drive_kind} for PC"
-            if vague:
-                return "gaming PC SSD storage upgrade"
+            kind = "SSD" if "ssd" in required.lower() or "nvme" in required.lower() else "drive"
+            if size_gb: return f"buy {size_gb}GB {kind} for PC"
+            if vague: return "gaming PC SSD storage upgrade"
             return f"buy {required} PC storage"
-
         if key == "cpu":
-            if mode == "general":
-                return "gaming PC CPU upgrade"
-            if vague:
-                return "gaming PC CPU upgrade"
+            if mode == "general": return "gaming PC CPU upgrade"
+            if vague: return "gaming PC CPU upgrade"
             return f"buy PC CPU similar or better than {required}"
-
         if key == "gpu":
-            if mode == "general":
-                return "gaming PC graphics card upgrade"
-            if vague:
-                return "gaming PC dedicated graphics card upgrade"
+            if mode == "general": return "gaming PC graphics card upgrade"
+            if vague: return "gaming PC dedicated graphics card upgrade"
             return f"buy graphics card similar or better than {required}"
-
         return f"buy PC part upgrade {required}"
 
-    def _toggle_auto_launch(self, enable: bool):
-        """Add or remove SteamScout from Windows startup (registry)."""
+    # ── Auto-launch (registry) ─────────────────────────────────────────────
+
+    def _toggle_auto_launch(self, enable):
         try:
+            import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
             reg_name = "SteamScout"
-
             reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
             key = winreg.OpenKey(reg, key_path, 0, winreg.KEY_SET_VALUE)
-
             if enable:
                 if getattr(sys, 'frozen', False):
                     cmd = f'"{sys.executable}"'
@@ -1264,704 +667,17 @@ class Overlay:
                     winreg.DeleteValue(key, reg_name)
                 except FileNotFoundError:
                     pass
-
             winreg.CloseKey(key)
             return True
         except Exception:
             return False
 
-    def open_settings(self):
-        if self._settings_win and self._settings_win.winfo_exists():
-            self._settings_win.lift()
-            self._settings_win.focus_force()
-            return
 
-        win = tk.Toplevel(self.root)
-        self._settings_win = win
-        win.title("SteamScout Settings")
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.lift()
-        win.focus_force()
-        win.configure(bg=BORDER)
-        win.geometry("540x620")
-        win.minsize(SETTINGS_MIN_W, SETTINGS_MIN_H)
-        self._settings_root_topmost_prev = bool(self.root.attributes("-topmost"))
-        self.root.attributes("-topmost", False)
-
-        inner = tk.Frame(win, bg=BG, padx=10, pady=8)
-        inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-
-        title_bar = tk.Frame(inner, bg=BG)
-        title_bar.pack(fill=tk.X)
-
-        tk.Label(title_bar, text="◆ STEAMSCOUT SETTINGS", bg=BG, fg=STEAM,
-                 font=self._font(11, "bold")).pack(side=tk.LEFT)
-
-        close_btn = tk.Label(title_bar, text="  ✕  ", bg=BG, fg=DIM,
-                             font=self._font(11), cursor="hand2")
-        close_btn.pack(side=tk.RIGHT)
-        close_btn.bind("<Button-1>", lambda _: self._close_settings())
-        close_btn.bind("<Enter>", lambda _: close_btn.config(fg=RED))
-        close_btn.bind("<Leave>", lambda _: close_btn.config(fg=DIM))
-
-        drag_state = {"x": 0, "y": 0}
-        resize_state = {
-            "active": False,
-            "dir": "",
-            "start_x": 0,
-            "start_y": 0,
-            "win_x": 0,
-            "win_y": 0,
-            "win_w": 0,
-            "win_h": 0,
-        }
-
-        def _start_drag(e):
-            drag_state["x"] = e.x_root - win.winfo_x()
-            drag_state["y"] = e.y_root - win.winfo_y()
-
-        def _move_drag(e):
-            win.geometry(f"+{e.x_root - drag_state['x']}+{e.y_root - drag_state['y']}")
-
-        def _settings_resize_start(e, direction):
-            resize_state["active"] = True
-            resize_state["dir"] = direction
-            resize_state["start_x"] = e.x_root
-            resize_state["start_y"] = e.y_root
-            resize_state["win_x"] = win.winfo_x()
-            resize_state["win_y"] = win.winfo_y()
-            resize_state["win_w"] = win.winfo_width()
-            resize_state["win_h"] = win.winfo_height()
-
-        def _settings_resize_move(e):
-            if not resize_state["active"]:
-                return
-
-            dw = e.x_root - resize_state["start_x"]
-            dh = e.y_root - resize_state["start_y"]
-            direction = resize_state["dir"]
-
-            new_x = resize_state["win_x"]
-            new_y = resize_state["win_y"]
-            new_w = resize_state["win_w"]
-            new_h = resize_state["win_h"]
-
-            if "e" in direction:
-                new_w = max(SETTINGS_MIN_W, resize_state["win_w"] + dw)
-            if "s" in direction:
-                new_h = max(SETTINGS_MIN_H, resize_state["win_h"] + dh)
-            if "w" in direction:
-                raw_w = resize_state["win_w"] - dw
-                new_w = max(SETTINGS_MIN_W, raw_w)
-                new_x = resize_state["win_x"] + (resize_state["win_w"] - new_w)
-            if "n" in direction:
-                raw_h = resize_state["win_h"] - dh
-                new_h = max(SETTINGS_MIN_H, raw_h)
-                new_y = resize_state["win_y"] + (resize_state["win_h"] - new_h)
-
-            win.geometry(f"{int(new_w)}x{int(new_h)}+{int(new_x)}+{int(new_y)}")
-
-        def _settings_resize_end(_):
-            resize_state["active"] = False
-            resize_state["dir"] = ""
-
-        def _build_settings_edge_resize_handles():
-            self._settings_edge_handles = {}
-            s = EDGE_RESIZE_SIZE
-            specs = {
-                "n":  {"x": s, "y": 0, "relwidth": 1.0, "width": -2 * s, "height": s, "cursor": "size_ns"},
-                "s":  {"x": s, "rely": 1.0, "y": -s, "relwidth": 1.0, "width": -2 * s, "height": s, "cursor": "size_ns"},
-                "w":  {"x": 0, "y": s, "width": s, "relheight": 1.0, "height": -2 * s, "cursor": "size_we"},
-                "e":  {"relx": 1.0, "x": -s, "y": s, "width": s, "relheight": 1.0, "height": -2 * s, "cursor": "size_we"},
-                "nw": {"x": 0, "y": 0, "width": s, "height": s, "cursor": "size_nw_se"},
-                "ne": {"relx": 1.0, "x": -s, "y": 0, "width": s, "height": s, "cursor": "size_ne_sw"},
-                "sw": {"x": 0, "rely": 1.0, "y": -s, "width": s, "height": s, "cursor": "size_ne_sw"},
-                "se": {"relx": 1.0, "rely": 1.0, "x": -s, "y": -s, "width": s, "height": s, "cursor": "size_nw_se"},
-            }
-            for direction, place_opts in specs.items():
-                cursor = place_opts["cursor"]
-                geom_opts = {k: v for k, v in place_opts.items() if k != "cursor"}
-                handle = tk.Frame(win, bg=BORDER, highlightthickness=0, bd=0, cursor=cursor)
-                handle.place(**geom_opts)
-                handle.bind("<ButtonPress-1>", lambda e, d=direction: _settings_resize_start(e, d))
-                handle.bind("<B1-Motion>", _settings_resize_move)
-                handle.bind("<ButtonRelease-1>", _settings_resize_end)
-                self._settings_edge_handles[direction] = handle
-
-        title_bar.bind("<ButtonPress-1>", _start_drag)
-        title_bar.bind("<B1-Motion>", _move_drag)
-        _build_settings_edge_resize_handles()
-
-        scroll_host = tk.Frame(inner, bg=BG)
-        scroll_host.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-
-        settings_canvas = tk.Canvas(scroll_host, bg=BG, highlightthickness=0, bd=0)
-        self._settings_canvas = settings_canvas
-        settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        settings_scroll = CustomScrollbar(
-            scroll_host,
-            command=settings_canvas.yview,
-            width=12,
-            track_color=BG,
-            thumb_color=SURFACE2,
-            thumb_active=STEAM,
-        )
-        self._settings_scrollbar = settings_scroll
-        settings_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        settings_canvas.configure(yscrollcommand=settings_scroll.set)
-
-        body = tk.Frame(settings_canvas, bg=BG, padx=14, pady=14)
-        self._settings_inner = body
-        body_window = settings_canvas.create_window((0, 0), window=body, anchor="nw")
-
-        def _settings_content_config(_):
-            settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
-
-        def _settings_canvas_config(e):
-            settings_canvas.itemconfig(body_window, width=e.width)
-
-        def _settings_mousewheel(e):
-            if getattr(e, "num", None) == 4:
-                settings_canvas.yview_scroll(-3, "units")
-                return
-            if getattr(e, "num", None) == 5:
-                settings_canvas.yview_scroll(3, "units")
-                return
-            delta = int(-1 * (e.delta / 120)) if getattr(e, "delta", 0) else 0
-            if delta:
-                settings_canvas.yview_scroll(delta, "units")
-
-        body.bind("<Configure>", _settings_content_config)
-        settings_canvas.bind("<Configure>", _settings_canvas_config)
-        self._bind_wheel_to_widget(settings_canvas, _settings_mousewheel)
-        self._bind_wheel_to_widget(body, _settings_mousewheel)
-
-        tk.Label(body, text="SteamScout Settings", bg=BG, fg=STEAM,
-                 font=self._font(12, "bold"), anchor="w").pack(fill=tk.X)
-        tk.Label(body, text="Customize overlay visuals and behavior.", bg=BG, fg=DIM,
-                 font=self._font(9), anchor="w").pack(fill=tk.X, pady=(0, 8))
-
-        # Appearance section
-        app_card = tk.Frame(body, bg=SURFACE, bd=1, highlightbackground=BORDER, highlightthickness=1)
-        app_card.pack(fill=tk.X, pady=(0, 8))
-        app_wrap = tk.Frame(app_card, bg=SURFACE, padx=10, pady=8)
-        app_wrap.pack(fill=tk.X)
-
-        tk.Label(app_wrap, text="Appearance", bg=SURFACE, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-
-        theme_var = tk.StringVar(value=self.settings.get("theme_mode", "dark"))
-        theme_row = tk.Frame(app_wrap, bg=SURFACE)
-        theme_row.pack(fill=tk.X, pady=(4, 2))
-        tk.Radiobutton(theme_row, text="Dark", variable=theme_var, value="dark",
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(side=tk.LEFT)
-        tk.Radiobutton(theme_row, text="Light", variable=theme_var, value="light",
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(side=tk.LEFT, padx=(8, 0))
-
-        tk.Label(app_wrap, text="Font Settings", bg=SURFACE, fg=STEAM,
-                 font=self._font(10, "bold")).pack(fill=tk.X, pady=(8, 0))
-        tk.Label(app_wrap, text="Choose any installed font or add custom .ttf/.otf files.",
-                 bg=SURFACE, fg=DIM, font=self._font(8)).pack(fill=tk.X)
-
-        curated = [
-            "Bahnschrift", "Aptos", "Segoe UI Variable", "Segoe UI", "Trebuchet MS", "Verdana", "Calibri", "Arial",
-            "Candara", "Corbel", "Cambria", "Georgia", "Tahoma", "Century Gothic", "Franklin Gothic Medium",
-            "Book Antiqua", "Palatino Linotype", "Consolas", "Cascadia Code", "Cascadia Mono", "Courier New",
-            "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Ubuntu", "Source Sans Pro", "Fira Sans",
-            "Nunito", "Inter", "Merriweather", "Playfair Display", "Raleway", "Oswald", "Noto Sans",
-        ]
-
-        def _build_font_options():
-            fams = sorted(set(tkfont.families(self.root)))
-            head = [f for f in curated if f in fams]
-            tail = [f for f in fams if f not in head]
-            out = head + tail
-            if self._font_family not in out:
-                out.insert(0, self._font_family)
-            return out or [self._font_family]
-
-        font_family_var = tk.StringVar(value=self.settings.get("font_family", self._font_family))
-        font_options = _build_font_options()
-
-        font_row = tk.Frame(app_wrap, bg=SURFACE)
-        font_row.pack(fill=tk.X, pady=(6, 0))
-        tk.Label(font_row, text="Font Family", bg=SURFACE, fg=TEXT, font=self._ui_font(9)).pack(side=tk.LEFT)
-        font_menu = tk.OptionMenu(font_row, font_family_var, *font_options)
-        font_menu.config(bg=SURFACE2, fg=TEXT, activebackground=SURFACE, activeforeground=BRIGHT,
-                 relief="flat", highlightthickness=0, font=self._ui_font(9))
-        font_menu["menu"].config(bg=SURFACE2, fg=TEXT, activebackground=STEAM, activeforeground=BRIGHT,
-                      font=self._ui_font(9))
-        font_menu.pack(side=tk.RIGHT)
-
-        font_actions = tk.Frame(app_wrap, bg=SURFACE)
-        font_actions.pack(fill=tk.X, pady=(6, 0))
-        font_info = tk.Label(font_actions, text=f"Fonts available: {len(font_options)}", bg=SURFACE, fg=DIM, font=self._ui_font(8))
-        font_info.pack(side=tk.LEFT)
-
-        def _reload_font_menu(new_pick=None):
-            opts = _build_font_options()
-            m = font_menu["menu"]
-            m.delete(0, "end")
-            for fam in opts:
-                m.add_command(label=fam, command=lambda v=fam: font_family_var.set(v))
-            if new_pick and new_pick in opts:
-                font_family_var.set(new_pick)
-            elif font_family_var.get() not in opts:
-                font_family_var.set(opts[0])
-            font_info.config(text=f"Fonts available: {len(opts)}")
-
-        def _add_custom_font_files():
-            paths = filedialog.askopenfilenames(
-                title="Add Custom Font Files",
-                parent=win,
-                filetypes=[("Font files", "*.ttf *.otf"), ("TrueType", "*.ttf"), ("OpenType", "*.otf")],
-            )
-            if not paths:
-                return
-
-            files = self.settings.setdefault("custom_font_files", [])
-            picked_family = None
-            for p in paths:
-                if p not in files:
-                    files.append(p)
-                new_families = self._register_font_file(p)
-                if new_families and picked_family is None:
-                    picked_family = new_families[0]
-
-            _save_settings(self.settings)
-            self._init_fonts()
-            _reload_font_menu(new_pick=picked_family)
-            self._raise_settings_window()
-
-        tk.Button(
-            font_actions,
-            text="Add Custom Font File...",
-            command=_add_custom_font_files,
-            bg=SURFACE2,
-            fg=TEXT,
-            relief="flat",
-            cursor="hand2",
-            font=self._ui_font(8),
-            padx=10,
-        ).pack(side=tk.RIGHT)
-
-        opacity_var = tk.DoubleVar(value=float(self.settings.get("opacity", 0.96)))
-        tk.Label(app_wrap, text="Opacity", bg=SURFACE, fg=TEXT,
-                 font=self._ui_font(9)).pack(fill=tk.X, pady=(6, 0))
-        opacity_row = tk.Frame(app_wrap, bg=SURFACE)
-        opacity_row.pack(fill=tk.X)
-        opacity_value = tk.Label(opacity_row, text=f"{opacity_var.get():.2f}", bg=SURFACE, fg=DIM, font=self._ui_font(8))
-        opacity_value.pack(side=tk.RIGHT)
-
-        def _on_opacity_change(v):
-            try:
-                val = float(v)
-                opacity_var.set(val)
-                opacity_value.config(text=f"{val:.2f}")
-            except Exception:
-                pass
-
-        opacity_slider = CustomSlider(
-            opacity_row,
-            from_=0.75,
-            to=1.00,
-            value=opacity_var.get(),
-            command=_on_opacity_change,
-            width=220,
-            height=20,
-            track_color=SURFACE2,
-            fill_color=STEAM,
-            thumb_color=BRIGHT,
-        )
-        opacity_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-
-        font_scale_var = tk.DoubleVar(value=float(self.settings.get("font_scale", 1.0)))
-        tk.Label(app_wrap, text="Font Size Scale", bg=SURFACE, fg=TEXT,
-                 font=self._ui_font(9)).pack(fill=tk.X, pady=(4, 0))
-        font_row2 = tk.Frame(app_wrap, bg=SURFACE)
-        font_row2.pack(fill=tk.X)
-        font_value = tk.Label(font_row2, text=f"{font_scale_var.get():.2f}x", bg=SURFACE, fg=DIM, font=self._ui_font(8))
-        font_value.pack(side=tk.RIGHT)
-
-        def _on_font_scale(v):
-            try:
-                snapped = round(float(v) / 0.05) * 0.05
-                font_scale_var.set(snapped)
-                font_value.config(text=f"{snapped:.2f}x")
-            except Exception:
-                pass
-
-        font_slider = CustomSlider(
-            font_row2,
-            from_=0.90,
-            to=1.35,
-            value=font_scale_var.get(),
-            command=_on_font_scale,
-            width=220,
-            height=20,
-            track_color=SURFACE2,
-            fill_color=STEAM,
-            thumb_color=BRIGHT,
-        )
-        font_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-
-        topmost_var = tk.BooleanVar(value=bool(self.settings.get("always_on_top", True)))
-        tk.Checkbutton(app_wrap, text="Keep overlay always on top", variable=topmost_var,
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(anchor="w", pady=(4, 2))
-
-        # Color section
-        color_card = tk.Frame(body, bg=SURFACE, bd=1, highlightbackground=BORDER, highlightthickness=1)
-        color_card.pack(fill=tk.X, pady=(0, 8))
-        color_wrap = tk.Frame(color_card, bg=SURFACE, padx=10, pady=8)
-        color_wrap.pack(fill=tk.X)
-
-        tk.Label(color_wrap, text="Custom Colors", bg=SURFACE, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-
-        color_keys = ["BG", "SURFACE", "SURFACE2", "BORDER", "TEXT", "DIM", "STEAM"]
-        for key in color_keys:
-            row = tk.Frame(color_wrap, bg=SURFACE)
-            row.pack(fill=tk.X, pady=2)
-            color_val = self.settings.get("custom_colors", {}).get(key, THEMES.get(theme_var.get(), THEMES["dark"])[key])
-            swatch = tk.Label(row, text="   ", bg=color_val, width=3)
-            swatch.pack(side=tk.LEFT)
-            tk.Label(row, text=f" {key}", bg=SURFACE, fg=TEXT,
-                     font=self._ui_font(9)).pack(side=tk.LEFT)
-            tk.Label(row, text=color_val, bg=SURFACE, fg=DIM,
-                     font=self._ui_font(8)).pack(side=tk.LEFT, padx=(8, 0))
-            tk.Button(
-                row,
-                text="Pick",
-                command=lambda k=key, s=swatch: self._pick_color(k, swatch_label=s),
-                bg=SURFACE2,
-                fg=TEXT,
-                relief="flat",
-                font=self._ui_font(9),
-                cursor="hand2",
-                padx=10,
-            ).pack(side=tk.RIGHT)
-
-        # Behavior section
-        behavior_card = tk.Frame(body, bg=SURFACE, bd=1, highlightbackground=BORDER, highlightthickness=1)
-        behavior_card.pack(fill=tk.X, pady=(0, 8))
-        behavior_wrap = tk.Frame(behavior_card, bg=SURFACE, padx=10, pady=8)
-        behavior_wrap.pack(fill=tk.X)
-
-        tk.Label(behavior_wrap, text="Startup", bg=SURFACE, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-        
-        auto_launch_var = tk.BooleanVar(value=bool(self.settings.get("auto_launch", False)))
-        tk.Checkbutton(behavior_wrap, text="Auto-launch when I log in",
-                       variable=auto_launch_var,
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(anchor="w", pady=(2, 8))
-
-        tk.Label(behavior_wrap, text="Upgrade Search", bg=SURFACE, fg=STEAM,
-                 font=self._font(10, "bold"), anchor="w").pack(fill=tk.X)
-        query_mode = tk.StringVar(value=self.settings.get("upgrade_query_mode", "specific"))
-        tk.Radiobutton(behavior_wrap, text="Specific item from game requirement",
-                       variable=query_mode, value="specific",
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(anchor="w")
-        tk.Radiobutton(behavior_wrap, text="General upgrade suggestions",
-                       variable=query_mode, value="general",
-                       bg=SURFACE, fg=TEXT, selectcolor=SURFACE2, activebackground=SURFACE,
-                       activeforeground=BRIGHT, font=self._ui_font(9)).pack(anchor="w")
-
-        # Bottom buttons
-        btns = tk.Frame(body, bg=BG)
-        btns.pack(fill=tk.X, pady=(10, 0))
-
-        def _reset_all():
-            self.settings = _default_settings()
-            _save_settings(self.settings)
-            self._refresh_theme()
-            self._close_settings()
-
-        tk.Button(btns, text="Reset Theme Colors", command=self._reset_custom_colors,
-                  bg=SURFACE2, fg=TEXT, relief="flat", cursor="hand2",
-                  font=self._ui_font(9)).pack(side=tk.LEFT)
-        tk.Button(btns, text="Reset All", command=_reset_all,
-                  bg=SURFACE2, fg=TEXT, relief="flat", cursor="hand2",
-                  font=self._ui_font(9)).pack(side=tk.LEFT, padx=(8, 0))
-
-        def _apply_and_close():
-            self.settings["theme_mode"] = theme_var.get()
-            self.settings["font_family"] = font_family_var.get()
-            self.settings["upgrade_query_mode"] = query_mode.get()
-            self.settings["always_on_top"] = bool(topmost_var.get())
-            self.settings["opacity"] = float(opacity_var.get())
-            self.settings["font_scale"] = float(font_scale_var.get())
-            
-            new_auto_launch = bool(auto_launch_var.get())
-            old_auto_launch = bool(self.settings.get("auto_launch", False))
-            if new_auto_launch != old_auto_launch:
-                self._toggle_auto_launch(new_auto_launch)
-            self.settings["auto_launch"] = new_auto_launch
-            
-            _save_settings(self.settings)
-            self._refresh_theme()
-            self._close_settings()
-
-        tk.Button(btns, text="Cancel", command=self._close_settings,
-                  bg=SURFACE2, fg=TEXT, relief="flat", cursor="hand2",
-                  font=self._ui_font(9)).pack(side=tk.RIGHT)
-        tk.Button(btns, text="Save", command=_apply_and_close,
-                  bg=STEAM, fg=BRIGHT, relief="flat", cursor="hand2",
-                  font=self._ui_font(9, "bold"), padx=14).pack(side=tk.RIGHT, padx=(0, 8))
-
-    def _pick_color(self, key: str, swatch_label=None):
-        self._raise_settings_window()
-        hex_color = self._open_custom_color_picker(key)
-        self._raise_settings_window()
-        if not hex_color:
-            return
-        custom = self.settings.setdefault("custom_colors", {})
-        custom[key] = hex_color
-        if swatch_label is not None:
-            swatch_label.config(bg=hex_color)
-        _save_settings(self.settings)
-        # Keep color updates smooth while in settings; apply full content repaint on Save.
-        self._refresh_theme(rebuild=False)
-
-    def _open_custom_color_picker(self, key: str):
-        parent = self._settings_win if self._settings_win and self._settings_win.winfo_exists() else self.root
-        dlg = tk.Toplevel(parent)
-        dlg.title(f"Pick {key} Color")
-        dlg.overrideredirect(False)
-        dlg.attributes("-topmost", True)
-        dlg.configure(bg=BORDER)
-        dlg.geometry("360x320")
-        dlg.transient(parent)
-
-        inner = tk.Frame(dlg, bg=BG, padx=10, pady=8)
-        inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-
-        bar = tk.Frame(inner, bg=BG)
-        bar.pack(fill=tk.X)
-        tk.Label(bar, text=f"◆ PICK {key} COLOR", bg=BG, fg=STEAM,
-                 font=self._font(10, "bold")).pack(side=tk.LEFT)
-        tk.Label(bar, text="  ✕  ", bg=BG, fg=DIM,
-                 font=self._font(10), cursor="hand2").pack(side=tk.RIGHT)
-
-        start_hex = self.settings.get("custom_colors", {}).get(
-            key,
-            THEMES.get(self.settings.get("theme_mode", "dark"), THEMES["dark"])[key],
-        )
-        rgb = self._hex_to_rgb(start_hex) or (30, 30, 30)
-
-        picked = {"value": None}
-        vars_rgb = [tk.IntVar(value=rgb[0]), tk.IntVar(value=rgb[1]), tk.IntVar(value=rgb[2])]
-        hex_var = tk.StringVar(value=start_hex)
-        updating = {"flag": False}
-
-        preview = tk.Frame(inner, bg=start_hex, height=54)
-        preview.pack(fill=tk.X, pady=(10, 8))
-
-        def _sync_from_rgb(*_):
-            if updating["flag"]:
-                return
-            updating["flag"] = True
-            col = self._rgb_to_hex(vars_rgb[0].get(), vars_rgb[1].get(), vars_rgb[2].get())
-            hex_var.set(col)
-            preview.configure(bg=col)
-            updating["flag"] = False
-
-        def _apply_hex(_=None):
-            if updating["flag"]:
-                return
-            parsed = self._hex_to_rgb(hex_var.get())
-            if not parsed:
-                return
-            updating["flag"] = True
-            for i in range(3):
-                vars_rgb[i].set(parsed[i])
-            preview.configure(bg=self._rgb_to_hex(*parsed))
-            updating["flag"] = False
-
-        labels = ["Red", "Green", "Blue"]
-        for i, label in enumerate(labels):
-            row = tk.Frame(inner, bg=BG)
-            row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=label, bg=BG, fg=TEXT, font=self._ui_font(9)).pack(side=tk.LEFT)
-            val_label = tk.Label(row, text=f"{vars_rgb[i].get():03d}", bg=BG, fg=DIM, width=4, anchor="e", font=self._ui_font(8))
-            val_label.pack(side=tk.RIGHT)
-
-            def _mk_cmd(var=vars_rgb[i], out=val_label):
-                def _cb(v):
-                    try:
-                        var.set(int(float(v)))
-                        out.config(text=f"{var.get():03d}")
-                    except Exception:
-                        pass
-                    _sync_from_rgb()
-                return _cb
-
-            slider = CustomSlider(
-                row,
-                from_=0,
-                to=255,
-                value=vars_rgb[i].get(),
-                command=_mk_cmd(),
-                width=180,
-                height=20,
-                track_color=SURFACE2,
-                fill_color=STEAM,
-                thumb_color=BRIGHT,
-            )
-            slider.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(8, 8))
-
-        hex_row = tk.Frame(inner, bg=BG)
-        hex_row.pack(fill=tk.X, pady=(8, 0))
-        tk.Label(hex_row, text="HEX", bg=BG, fg=TEXT, font=self._ui_font(9)).pack(side=tk.LEFT)
-        hex_entry = tk.Entry(hex_row, textvariable=hex_var, bg=SURFACE2, fg=TEXT,
-                     insertbackground=BRIGHT, relief="flat", font=self._ui_font(9))
-        hex_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        hex_entry.bind("<Return>", _apply_hex)
-        tk.Button(hex_row, text="Apply", command=_apply_hex, bg=SURFACE2, fg=TEXT,
-              relief="flat", cursor="hand2", font=self._ui_font(8), padx=8).pack(side=tk.RIGHT, padx=(8, 0))
-
-        btns = tk.Frame(inner, bg=BG)
-        btns.pack(fill=tk.X, pady=(12, 0))
-
-        def _cancel():
-            dlg.destroy()
-
-        def _ok():
-            picked["value"] = self._rgb_to_hex(vars_rgb[0].get(), vars_rgb[1].get(), vars_rgb[2].get())
-            dlg.destroy()
-
-        tk.Button(btns, text="Cancel", command=_cancel, bg=SURFACE2, fg=TEXT,
-                  relief="flat", cursor="hand2", font=self._ui_font(9)).pack(side=tk.RIGHT)
-        tk.Button(btns, text="Use Color", command=_ok, bg=STEAM, fg=BRIGHT,
-                  relief="flat", cursor="hand2", font=self._ui_font(9, "bold"), padx=12).pack(side=tk.RIGHT, padx=(0, 8))
-
-        # Drag picker window
-        drag_state = {"x": 0, "y": 0}
-
-        def _start_drag(e):
-            drag_state["x"] = e.x_root - dlg.winfo_x()
-            drag_state["y"] = e.y_root - dlg.winfo_y()
-
-        def _move_drag(e):
-            dlg.geometry(f"+{e.x_root - drag_state['x']}+{e.y_root - drag_state['y']}")
-
-        bar.bind("<ButtonPress-1>", _start_drag)
-        bar.bind("<B1-Motion>", _move_drag)
-
-        # Wire close button in custom title bar
-        for child in bar.winfo_children():
-            if isinstance(child, tk.Label) and "✕" in child.cget("text"):
-                child.bind("<Button-1>", lambda _: _cancel())
-                child.bind("<Enter>", lambda _: child.config(fg=RED))
-                child.bind("<Leave>", lambda _: child.config(fg=DIM))
-
-        dlg.protocol("WM_DELETE_WINDOW", _cancel)
-        dlg.focus_force()
-        parent.wait_window(dlg)
-        return picked["value"]
-
-    def _reset_custom_colors(self):
-        self.settings["custom_colors"] = {}
-        _save_settings(self.settings)
-        self._refresh_theme(rebuild=False)
-
-    def _refresh_theme(self, rebuild=True):
-        self._apply_theme_globals()
-        self._init_fonts()
-        self.root.configure(bg=BORDER)
-        if not (self._settings_win and self._settings_win.winfo_exists()):
-            self.root.attributes("-topmost", bool(self.settings.get("always_on_top", True)))
-        self.root.attributes("-alpha", float(self.settings.get("opacity", 0.96)))
-        if hasattr(self, "_scroll_canvas"):
-            self._scroll_canvas.configure(bg=BG)
-        if hasattr(self, "_content"):
-            self._content.configure(bg=BG)
-        if hasattr(self, "_scroll_host"):
-            self._scroll_host.configure(bg=BG)
-        if hasattr(self, "_inner"):
-            self._inner.configure(bg=BG)
-        if hasattr(self, "_status"):
-            self._status.configure(bg=BG, fg=DIM)
-        if hasattr(self, "_scrollbar") and self._scrollbar:
-            self._scrollbar.update_theme(track_color=BG, thumb_color=SURFACE2, thumb_active=STEAM)
-        if hasattr(self, "_edge_handles") and self._edge_handles:
-            for handle in self._edge_handles.values():
-                handle.configure(bg=BORDER)
-
-        if self._settings_win and self._settings_win.winfo_exists():
-            self._settings_win.configure(bg=BORDER)
-        if self._settings_canvas:
-            self._settings_canvas.configure(bg=BG)
-        if self._settings_inner:
-            self._settings_inner.configure(bg=BG)
-        if self._settings_scrollbar:
-            self._settings_scrollbar.update_theme(track_color=BG, thumb_color=SURFACE2, thumb_active=STEAM)
-        if hasattr(self, "_settings_edge_handles") and self._settings_edge_handles:
-            for handle in self._settings_edge_handles.values():
-                handle.configure(bg=BORDER)
-
-        if rebuild:
-            if self._last_result:
-                self.show_result(self._last_result)
-            else:
-                self.show_idle()
-
-    def _raise_settings_window(self):
-        if self._settings_win and self._settings_win.winfo_exists():
-            self._settings_win.lift()
-            self._settings_win.attributes("-topmost", True)
-            self._settings_win.focus_force()
-
-    def _close_settings(self):
-        if self._settings_win and self._settings_win.winfo_exists():
-            self._settings_win.destroy()
-        self._settings_win = None
-        self._settings_canvas = None
-        self._settings_inner = None
-        self._settings_scrollbar = None
-        self._settings_edge_handles = {}
-        if self._settings_root_topmost_prev is not None:
-            self.root.attributes("-topmost", self._settings_root_topmost_prev)
-            self._settings_root_topmost_prev = None
-
-    # ── WebSocket ─────────────────────────────────────────────────────────────
-
-    async def _ws_loop(self):
-        while True:
-            try:
-                async with websockets.connect(WS_URL) as ws:
-                    self.root.after(0, self.show_idle)
-                    async for raw in ws:
-                        msg = json.loads(raw)
-                        self._dispatch(msg)
-            except Exception:
-                self.root.after(0, self.show_connecting)
-                await asyncio.sleep(2)
-
-    def _dispatch(self, msg: dict):
-        t = msg.get("type")
-        if t == "idle":
-            self.root.after(0, self.show_idle)
-        elif t == "loading":
-            self.root.after(0, self.show_loading, msg["app_id"], msg["section"])
-        elif t == "result":
-            self.root.after(0, self.show_result, msg)
-        elif t == "error":
-            self.root.after(0, self.show_error, msg["app_id"], msg.get("section", ""), msg.get("msg", ""))
-        elif t == "warning":
-            self.root.after(0, self.show_warning, msg.get("msg", ""))
-
+# ── Standalone entry point ─────────────────────────────────────────────────────
 
 def main():
-    root = tk.Tk()
-    Overlay(root)
-    root.mainloop()
-
+    ov = Overlay(close_callback=lambda: sys.exit(0))
+    ov.start()
 
 if __name__ == "__main__":
     main()

@@ -44,6 +44,7 @@ def _data_dir():
 APP_DIR = _app_dir()
 STEAM_DEBUG_URL = "http://localhost:8080/json"
 ICON_PNG = os.path.join(APP_DIR, "SteamScoutIcon.png")
+ICON_ICO = os.path.join(APP_DIR, "steamscout.ico")
 
 # ── Single-instance guard ──────────────────────────────────────────────────────
 
@@ -56,14 +57,16 @@ def _acquire_single_instance():
 # ── Icon ───────────────────────────────────────────────────────────────────────
 
 def _load_tray_icon():
-    """Load the SteamScout icon PNG, falling back to a generated icon."""
-    try:
-        if os.path.exists(ICON_PNG):
-            img = Image.open(ICON_PNG).convert("RGBA")
-            img = img.resize((64, 64), Image.LANCZOS)
-            return img
-    except Exception:
-        pass
+    """Load the SteamScout icon, preferring .ico for crisp tray rendering."""
+    # Try .ico first — gives Windows the native multi-size icon it expects
+    for path in (ICON_ICO, ICON_PNG):
+        try:
+            if os.path.exists(path):
+                img = Image.open(path).convert("RGBA")
+                img = img.resize((64, 64), Image.LANCZOS)
+                return img
+        except Exception:
+            continue
     # Fallback: solid blue circle with white S
     from PIL import ImageDraw, ImageFont
     size = 64
@@ -103,12 +106,15 @@ def _find_steam_path():
 
 
 def _is_steam_running():
-    for proc in psutil.process_iter(["name"]):
-        try:
-            if (proc.info.get("name") or "").lower() == "steam.exe":
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+    try:
+        for proc in psutil.process_iter(["name"]):
+            try:
+                if (proc.info.get("name") or "").lower() == "steam.exe":
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+    except Exception:
+        pass
     return False
 
 
@@ -134,7 +140,7 @@ def _ensure_steam_debug():
         try:
             if (proc.info.get("name") or "").lower() == "steam.exe":
                 proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
     time.sleep(3)
 
@@ -207,22 +213,22 @@ class SteamScoutApp:
         self._steam_active = False
         self._debug_ready = False
         self._overlay_visible = False
-        self._root = None
         self._overlay = None
         self._tray = None
         self._notified_waiting = False
+        self._steam_check_result = None       # latest result from bg thread
+        self._steam_check_lock = threading.Lock()
 
     # ── Public ──────────────────────────────────────────────────────────────
 
     def run(self):
-        import tkinter as tk
-        from Overlay import Overlay
+        try:
+            from Overlay import Overlay
+        except Exception as e:
+            print(f"Failed to import Overlay: {e}", file=sys.stderr)
+            return
 
-        self._root = tk.Tk()
-        self._root.withdraw()                       # start hidden
-        self._overlay = Overlay(self._root, close_callback=self._hide)
-        self._root.withdraw()                       # ensure hidden after Overlay init
-        self._root.protocol("WM_DELETE_WINDOW", self._hide)
+        self._overlay = Overlay(close_callback=self._hide)
 
         # Backend WebSocket server in a daemon thread
         self._start_backend()
@@ -230,17 +236,24 @@ class SteamScoutApp:
         # System tray icon in a daemon thread
         self._start_tray()
 
-        # Steam process monitor via tkinter after-loop
-        self._poll_steam()
+        # Steam process checker + poller in a background thread
+        threading.Thread(target=self._steam_monitor_loop, daemon=True, name="SteamMonitor").start()
 
-        self._root.mainloop()
+        # Overlay.start() blocks (runs the pywebview event loop on main thread)
+        try:
+            self._overlay.start()
+        except Exception as e:
+            print(f"Overlay crashed: {e}", file=sys.stderr)
 
     # ── Backend ─────────────────────────────────────────────────────────────
 
     def _start_backend(self):
         def _run():
-            import Backend
-            asyncio.run(Backend.main())
+            try:
+                import Backend
+                asyncio.run(Backend.main())
+            except Exception as e:
+                print(f"Backend crashed: {e}", file=sys.stderr)
 
         threading.Thread(target=_run, daemon=True, name="Backend").start()
 
@@ -266,15 +279,20 @@ class SteamScoutApp:
             self._tray.title = text
 
     def _on_tray_show(self, icon=None, item=None):
-        if self._root:
-            self._root.after(0, self._show)
+        self._show()
 
     def _on_tray_quit(self, icon=None, item=None):
         self._running = False
-        if self._tray:
-            self._tray.stop()
-        if self._root:
-            self._root.after(0, self._root.destroy)
+        try:
+            if self._tray:
+                self._tray.stop()
+        except Exception:
+            pass
+        try:
+            if self._overlay and self._overlay._window:
+                self._overlay._window.destroy()
+        except Exception:
+            pass
 
     def _on_tray_autostart(self, icon=None, item=None):
         _toggle_autostart(not _is_autostart_enabled())
@@ -282,71 +300,62 @@ class SteamScoutApp:
     # ── Overlay visibility ──────────────────────────────────────────────────
 
     def _show(self):
-        if self._root:
-            self._root.deiconify()
-            self._root.lift()
-            if self._overlay:
-                self._root.attributes(
-                    "-topmost",
-                    bool(self._overlay.settings.get("always_on_top", True)),
-                )
+        if self._overlay:
+            self._overlay.show()
             self._overlay_visible = True
 
     def _hide(self):
-        if self._root:
-            if self._overlay and hasattr(self._overlay, "_close_settings"):
-                self._overlay._close_settings()
-            self._root.withdraw()
+        if self._overlay:
+            self._overlay.hide()
             self._overlay_visible = False
 
-    # ── Steam monitor (tkinter after-loop) ──────────────────────────────────
+    # ── Steam monitor (background thread loop) ─────────────────────────────
 
-    def _poll_steam(self):
-        if not self._running:
-            return
+    def _steam_monitor_loop(self):
+        """Combined Steam check + poll loop, runs entirely in a daemon thread."""
+        while self._running:
+          try:
+            steam_on = _is_steam_running()
 
-        steam_on = _is_steam_running()
+            if steam_on and not self._steam_active:
+                self._steam_active = True
+                self._notified_waiting = False
+                self._update_tray_tooltip("SteamScout — Connecting to Steam…")
+                if not self._debug_ready:
+                    self._setup_debug_and_show()
+                else:
+                    self._update_tray_tooltip("SteamScout — Active")
+                    self._show()
+            elif not steam_on and self._steam_active:
+                self._steam_active = False
+                self._debug_ready = False
+                self._update_tray_tooltip("SteamScout — Waiting for Steam")
+                self._hide()
+            elif not steam_on and not self._notified_waiting:
+                self._notified_waiting = True
+                self._update_tray_tooltip("SteamScout — Waiting for Steam")
+                if self._tray:
+                    try:
+                        self._tray.notify(
+                            "SteamScout is running in the background.\n"
+                            "The overlay will appear when you open Steam.",
+                            "SteamScout",
+                        )
+                    except Exception:
+                        pass
 
-        if steam_on and not self._steam_active:
-            self._steam_active = True
-            self._notified_waiting = False
-            self._update_tray_tooltip("SteamScout — Connecting to Steam…")
-            if not self._debug_ready:
-                threading.Thread(
-                    target=self._setup_debug_and_show, daemon=True
-                ).start()
-            else:
-                self._update_tray_tooltip("SteamScout — Active")
-                self._show()
-        elif not steam_on and self._steam_active:
-            self._steam_active = False
-            self._debug_ready = False
-            self._update_tray_tooltip("SteamScout — Waiting for Steam")
-            self._hide()
-        elif not steam_on and not self._notified_waiting:
-            # First poll after launch with no Steam running
-            self._notified_waiting = True
-            self._update_tray_tooltip("SteamScout — Waiting for Steam")
-            if self._tray:
-                try:
-                    self._tray.notify(
-                        "SteamScout is running in the background.\n"
-                        "The overlay will appear when you open Steam.",
-                        "SteamScout",
-                    )
-                except Exception:
-                    pass
-
-        self._root.after(3000, self._poll_steam)
+            time.sleep(3)
+          except Exception:
+            time.sleep(5)
 
     def _setup_debug_and_show(self):
         """Ensure the debug endpoint is reachable, then show the overlay."""
         ok = _ensure_steam_debug()
         self._debug_ready = ok
 
-        if ok and self._root:
+        if ok:
             self._update_tray_tooltip("SteamScout — Active")
-            self._root.after(0, self._show)
+            self._show()
         elif self._tray:
             self._update_tray_tooltip("SteamScout — Could not connect")
             try:

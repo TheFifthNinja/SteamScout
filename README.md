@@ -1,11 +1,39 @@
 # SteamScout
 
+<p align="center">
+  <img src="SteamScoutIcon.png" alt="SteamScout" width="128">
+</p>
+
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![WebView2](https://img.shields.io/badge/UI-Edge%20WebView2-0078D4?logo=microsoftedge&logoColor=white)
+![Steam](https://img.shields.io/badge/Steam-Compatible-1b2838?logo=steam&logoColor=white)
+![Tests](https://img.shields.io/badge/Tests-113%20passing-brightgreen?logo=pytest&logoColor=white)
+
 Real-time floating overlay that reads **exactly which Steam page you're on**
-and tells you instantly whether your PC can run that game.
+and tells you instantly whether your PC can run that game — complete with
+**benchmark-backed GPU & CPU scoring**, **estimated FPS at Low / Medium / High**,
+and **upgrade suggestions** with price links.
 
 SteamScout runs quietly in the system tray — just like Discord.  
 When Steam opens, the overlay activates automatically.  
 When Steam closes, it hides back to the tray.
+
+---
+
+## Features
+
+- **Automatic detection** — Reads Steam's CEF debug port to identify which game page you're browsing, in real time
+- **Full compatibility check** — Compares your RAM, OS, CPU, GPU, DirectX, and storage against every game's requirements
+- **Benchmark-backed scoring** — 120+ GPU and 130+ CPU entries with relative performance scores for accurate comparisons
+- **FPS estimator** — Predicts frame rates at Low / Medium / High presets using a min+recommended scoring blend
+- **Min-only awareness** — Games that only list minimum requirements are handled gracefully with adjusted estimates
+- **Upgrade suggestions** — Failed checks show one-click links to find compatible parts online
+- **Lightweight overlay** — Runs in a WebView2 window; uses only CSS `transform`/`opacity` animations for near-zero GPU cost
+- **System tray app** — Sits quietly in the tray; auto-shows when Steam opens, auto-hides when Steam closes
+- **Dark & light themes** — Custom accent colors, font picker, opacity slider, and font scaling
+- **Resizable & draggable** — Native Win32 resize handles and drag, works on any monitor
 
 ---
 
@@ -115,10 +143,27 @@ To create a Windows installer, install
 | ℹ   | Informational (shown side-by-side for manual check) |
 | ⚠   | Warning |
 
-RAM and OS version are checked precisely. GPU and CPU are shown
-side-by-side because comparing GPU model strings reliably requires a
-benchmark database — you can judge at a glance whether e.g. your RTX 3070
-beats the required GTX 970.
+RAM and OS version are checked precisely. GPU and CPU are scored using a
+built-in benchmark database (~120 GPUs, ~130 CPUs) so SteamScout can
+accurately tell whether your hardware meets, exceeds, or falls below the
+game's requirements — and estimate FPS at each preset.
+
+Games that only publish **minimum** requirements (no recommended) are
+detected and flagged as "NOT AVAILABLE" for the recommended tier, with
+adjusted estimates noting the reduced precision.
+
+---
+
+## Running tests
+
+```
+pip install pytest
+python -m pytest tests/ -v
+```
+
+All 113 tests cover the compatibility engine: size/DX parsing, HTML
+requirement extraction, hardware name normalization, GPU & CPU benchmark
+lookups, scoring logic, performance estimation, and min-only edge cases.
 
 ---
 
@@ -144,11 +189,15 @@ beats the required GTX 970.
 SteamScout/
 ├── SteamScout.pyw     — Main entry point (system tray app)
 ├── Backend.py         — CEF URL reader, spec collector, Steam API, WebSocket server
-├── Overlay.py         — Floating tkinter overlay
-├── SteamScoutIcon.png — Application icon
+├── Overlay.py         — Floating pywebview overlay (Edge WebView2 / Chromium)
+├── overlay_ui.html    — Overlay front-end (HTML / CSS / JS)
+├── SteamScoutIcon.png — Application icon (PNG)
+├── steamscout.ico     — Application icon (ICO, multi-size)
 ├── build.py           — PyInstaller build script
 ├── installer.iss      — Inno Setup installer script
 ├── Requirements.txt   — Python packages
+├── tests/
+│   └── test_backend.py — 113 unit tests for the backend engine
 └── README.md
 ```
 
