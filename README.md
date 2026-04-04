@@ -181,6 +181,15 @@ lookups, scoring logic, performance estimation, and min-only edge cases.
 **Steam took a long time to restart**  
 → Completely normal — Steam downloads updates on restart sometimes  
 
+**Windows Defender / SmartScreen blocks the download or EXE**  
+→ This is a false positive common with all PyInstaller-built apps — the EXE
+  is not signed with a paid code-signing certificate, so Windows treats any
+  unknown publisher as suspicious  
+→ Click **"More info"** → **"Run anyway"** on the SmartScreen prompt  
+→ If Defender quarantines the file: open **Windows Security** → **Virus &
+  threat protection** → **Protection history** → find the entry → **Allow**  
+→ You can verify the source yourself — the entire codebase is open on this repo  
+
 ---
 
 ## File structure

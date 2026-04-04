@@ -42,5 +42,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version='C:\\Users\\GGPC\\Documents\\SteamScout\\version_info.txt',
     icon=['C:\\Users\\GGPC\\Documents\\SteamScout\\steamscout.ico'],
+    manifest='C:\\Users\\GGPC\\Documents\\SteamScout\\SteamScout.manifest',
 )

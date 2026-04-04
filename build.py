@@ -15,6 +15,8 @@ BUILD_DIR = os.path.dirname(os.path.abspath(__file__))
 ICON_PNG = os.path.join(BUILD_DIR, "SteamScoutIcon.png")
 ICON_ICO = os.path.join(BUILD_DIR, "steamscout.ico")
 UI_HTML  = os.path.join(BUILD_DIR, "overlay_ui.html")
+VERSION_INFO = os.path.join(BUILD_DIR, "version_info.txt")
+MANIFEST = os.path.join(BUILD_DIR, "SteamScout.manifest")
 
 
 def generate_ico():
@@ -57,6 +59,8 @@ def build():
             f"--icon={ICON_ICO}",
             f"--add-data={ICON_PNG};.",
             f"--add-data={UI_HTML};.",
+            f"--version-file={VERSION_INFO}",
+            f"--manifest={MANIFEST}",
             "--clean",
             "--noconfirm",
             # Runtime-imported modules PyInstaller can't auto-detect
