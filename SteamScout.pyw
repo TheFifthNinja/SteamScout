@@ -216,8 +216,6 @@ class SteamScoutApp:
         self._overlay = None
         self._tray = None
         self._notified_waiting = False
-        self._steam_check_result = None       # latest result from bg thread
-        self._steam_check_lock = threading.Lock()
 
     # ── Public ──────────────────────────────────────────────────────────────
 

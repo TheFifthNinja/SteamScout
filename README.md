@@ -120,14 +120,14 @@ This means it correctly detects:
 
 ## Building from source
 
-To create a standalone `SteamScout.exe`:
+To create a standalone build:
 
 ```
 pip install pyinstaller pillow
 python build.py
 ```
 
-The EXE is written to `dist/SteamScout.exe`.
+The output is `dist/SteamScout.exe` — a single portable executable.
 
 To create a Windows installer, install
 [Inno Setup](https://jrsoftware.org/isinfo.php) and compile `installer.iss`.

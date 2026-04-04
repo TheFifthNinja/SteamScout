@@ -15,6 +15,15 @@ import tempfile
 import os
 from typing import Optional, Tuple
 
+# Suppress console windows from subprocess calls (reduces AV false positives)
+_STARTUPINFO = None
+_CREATION_FLAGS = 0
+if sys.platform == "win32":
+    _STARTUPINFO = subprocess.STARTUPINFO()
+    _STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _STARTUPINFO.wShowWindow = 0  # SW_HIDE
+    _CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
+
 import psutil
 import requests
 import websockets
@@ -52,7 +61,9 @@ def _wmic(query: str) -> list:
     try:
         r = subprocess.run(
             ["wmic"] + query.split(),
-            capture_output=True, text=True, timeout=6
+            capture_output=True, text=True, timeout=6,
+            startupinfo=_STARTUPINFO,
+            creationflags=_CREATION_FLAGS,
         )
         lines = [l.strip() for l in r.stdout.splitlines() if l.strip()]
         return lines[1:] if len(lines) > 1 else []
@@ -109,7 +120,10 @@ def get_directx_version() -> str:
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
             out_file = f.name
-        subprocess.run(["dxdiag", "/whql:off", "/t", out_file], capture_output=True, text=True, timeout=20)
+        subprocess.run(["dxdiag", "/whql:off", "/t", out_file],
+                       capture_output=True, text=True, timeout=20,
+                       startupinfo=_STARTUPINFO,
+                       creationflags=_CREATION_FLAGS)
         for enc in ("utf-16", "utf-8", "cp1252", "latin-1"):
             try:
                 with open(out_file, "r", encoding=enc, errors="ignore") as f:

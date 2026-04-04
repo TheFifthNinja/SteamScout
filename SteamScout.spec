@@ -26,16 +26,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='SteamScout',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -45,4 +42,13 @@ exe = EXE(
     version='C:\\Users\\GGPC\\Documents\\SteamScout\\version_info.txt',
     icon=['C:\\Users\\GGPC\\Documents\\SteamScout\\steamscout.ico'],
     manifest='C:\\Users\\GGPC\\Documents\\SteamScout\\SteamScout.manifest',
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='SteamScout',
 )
