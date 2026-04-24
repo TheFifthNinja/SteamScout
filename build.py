@@ -74,6 +74,13 @@ def build():
             "--hidden-import=clr_loader",
             "--hidden-import=pythonnet",
             "--collect-all=webview",
+            # Search / Elasticsearch (cloud-connected, no local ES needed)
+            "--hidden-import=search",
+            "--hidden-import=search.es_client",
+            "--hidden-import=search.catalog",
+            "--hidden-import=search.service",
+            "--hidden-import=elasticsearch",
+            "--hidden-import=elastic_transport",
         ]
     )
 

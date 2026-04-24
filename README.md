@@ -16,6 +16,10 @@ and tells you instantly whether your PC can run that game — complete with
 **benchmark-backed GPU & CPU scoring**, **estimated FPS at Low / Medium / High**,
 and **upgrade suggestions** with price links.
 
+SteamScout also includes a **game search** powered by Elasticsearch: search
+any game across the entire Steam catalog by name or genre and check compatibility
+on demand — without having to browse to it in Steam.
+
 SteamScout runs quietly in the system tray — just like Discord.  
 When Steam opens, the overlay activates automatically.  
 When Steam closes, it hides back to the tray.
@@ -26,8 +30,9 @@ When Steam closes, it hides back to the tray.
 
 - **Automatic detection** — Reads Steam's CEF debug port to identify which game page you're browsing, in real time
 - **Full compatibility check** — Compares your RAM, OS, CPU, GPU, DirectX, and storage against every game's requirements
-- **Benchmark-backed scoring** — 120+ GPU and 130+ CPU entries with relative performance scores for accurate comparisons
+- **Benchmark-backed scoring** — 250+ GPU and 130+ CPU entries with relative performance scores for accurate comparisons
 - **FPS estimator** — Predicts frame rates at Low / Medium / High presets using a min+recommended scoring blend
+- **Game search** — Search the entire Steam catalog (~100k games) by name or genre; see compatibility at a glance
 - **Min-only awareness** — Games that only list minimum requirements are handled gracefully with adjusted estimates
 - **Upgrade suggestions** — Failed checks show one-click links to find compatible parts online
 - **Lightweight overlay** — Runs in a WebView2 window; uses only CSS `transform`/`opacity` animations for near-zero GPU cost
@@ -37,19 +42,50 @@ When Steam closes, it hides back to the tray.
 
 ---
 
-## Installation
-
-### Option 1 — Download (recommended)
+## For end users (download)
 
 1. Download **SteamScout.exe** from the [releases page](../../releases/latest)
-2. Place it anywhere and double-click to run
-3. SteamScout starts in the system tray — done!
+2. Double-click `SteamScout.exe`
 
-### Option 2 — From source (developers)
+Game search connects automatically to the cloud — no setup required.
 
-1. Install **Python 3.9+** from https://python.org (tick "Add Python to PATH")
-2. `pip install -r Requirements.txt`
-3. `python SteamScout.pyw`
+---
+
+## Running from source
+
+### 1. Prerequisites
+
+- **Python 3.9+** — https://python.org (tick "Add Python to PATH")
+- **Steam** installed
+- Internet connection
+
+### 2. Install Python dependencies
+
+```
+pip install -r Requirements.txt
+```
+
+### 3. Run
+
+```
+python SteamScout.pyw
+```
+
+The app starts in the system tray. On first launch with Elasticsearch running,
+it automatically indexes the Steam catalog in the background (this takes a few
+minutes — the app is fully usable while it runs).
+
+---
+
+## Building a standalone EXE
+
+```
+pip install pyinstaller pillow
+python build.py
+```
+
+Output: `dist\SteamScout.exe` — a single portable executable. No Python required
+to run it on another machine. Game search connects automatically to the cloud.
 
 ---
 
@@ -63,63 +99,58 @@ API for that game's system requirements.
 
 This means it correctly detects:
 
-| Steam page you're on           | Overlay shows                     |
-|-------------------------------|-----------------------------------|
+| Steam page you're on              | Overlay shows                       |
+|-----------------------------------|-------------------------------------|
 | `store.steampowered.com/app/730`  | Compatibility for CS2 (Store page)  |
-| `.../app/730/library`         | Compatibility for CS2 (Library)     |
-| `.../app/730/community`       | Compatibility for CS2 (Community)   |
-| `.../app/730/news`            | Compatibility for CS2 (News)        |
-| Any non-game Steam page       | Overlay sleeps                      |
+| `.../app/730/library`             | Compatibility for CS2 (Library)     |
+| `.../app/730/community`           | Compatibility for CS2 (Community)   |
+| `.../app/730/news`                | Compatibility for CS2 (News)        |
+| Any non-game Steam page           | Overlay sleeps                      |
 
----
+### Game search (Elasticsearch)
 
-## Requirements
+On startup, two background jobs run:
 
-- **Windows 10 or 11**
-- **Steam** installed
-- Internet connection
+1. **App list index** — calls Steam's `ISteamApps/GetAppList` (one request,
+   ~100k games) and bulk-inserts names + IDs into Elasticsearch.
+2. **SteamSpy enrichment** — fetches genre/tag data page by page (~1 req/s)
+   and updates each document.
+3. **Requirements enrichment** — slowly fetches full `pc_requirements` from
+   the Steam Store API for each game (~1.5 s/game) and caches them so future
+   `CHECK` clicks are instant.
 
-> Python is only needed when running from source.
+Clicking a game in the search panel triggers an on-demand compatibility check
+using the same engine as the real-time overlay.
 
 ---
 
 ## How to use
 
-1. **System tray** — Right-click the SteamScout icon in your taskbar for options:
-   - *Show Overlay* — bring the overlay window back (or double-click the icon)
+1. **System tray** — Right-click the SteamScout icon in your taskbar:
+   - *Show Overlay* — bring the overlay back (or double-click the icon)
    - *Start with Windows* — launch SteamScout at boot
    - *Quit SteamScout* — exit completely
 
-   If Steam isn't running when you start SteamScout, you'll get a notification
-   letting you know it's waiting in the background.
+2. **Real-time overlay** — Appears automatically when Steam is running.
+   Browse game pages in Steam and the overlay updates instantly.
 
-2. **Overlay** — Appears automatically when Steam is running.
-   Browse game pages in Steam and the overlay updates in real-time.
-   Click **✕** to hide it back to the tray (the app keeps running).
+3. **Game search** — Click **🔍** in the overlay title bar. Type any game name,
+   optionally filter by genre chips, then click **CHECK** on a result to see
+   full compatibility details in the main overlay view.
 
-3. **Settings** — Click the **⚙** button in the overlay for theme, font,
-   opacity, and other options.
+4. **Settings** — Click **⚙** for theme, font, opacity, and other options.
 
 ---
 
 ## Overlay controls
 
-- **Drag** anywhere to reposition
-- **✕** to hide to system tray
-- **⚙** to open settings
-
----
-
-## Building from source
-
-To create a standalone build:
-
-```
-pip install pyinstaller pillow
-python build.py
-```
-
-The output is `dist/SteamScout.exe` — a single portable executable.
+| Control | Action |
+|---------|--------|
+| Drag title bar | Reposition the overlay |
+| **🔍** | Open game search |
+| **⚙** | Open settings |
+| **✕** | Hide to system tray |
+| Resize handles | Drag any edge or corner to resize |
 
 ---
 
@@ -129,17 +160,8 @@ The output is `dist/SteamScout.exe` — a single portable executable.
 |------|---------|
 | ✓   | Meets requirement |
 | ✗   | Below requirement |
-| ℹ   | Informational (shown side-by-side for manual check) |
-| ⚠   | Warning |
-
-RAM and OS version are checked precisely. GPU and CPU are scored using a
-built-in benchmark database (~120 GPUs, ~130 CPUs) so SteamScout can
-accurately tell whether your hardware meets, exceeds, or falls below the
-game's requirements — and estimate FPS at each preset.
-
-Games that only publish **minimum** requirements (no recommended) are
-detected and flagged as "NOT AVAILABLE" for the recommended tier, with
-adjusted estimates noting the reduced precision.
+| ℹ   | Informational |
+| ⚠   | Warning / could not verify |
 
 ---
 
@@ -150,34 +172,35 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-All 113 tests cover the compatibility engine: size/DX parsing, HTML
-requirement extraction, hardware name normalization, GPU & CPU benchmark
-lookups, scoring logic, performance estimation, and min-only edge cases.
+All 113 tests cover the compatibility engine: size/DX parsing, HTML requirement
+extraction, hardware name normalization, GPU & CPU benchmark lookups, scoring
+logic, performance estimation, and min-only edge cases.
 
 ---
 
 ## Troubleshooting
 
 **"Connecting to backend…" never goes away**  
-→ Make sure nothing else is using port 8765  
+→ Something else is using port 8765  
 → Check `%APPDATA%\SteamScout\backend.log` for errors
 
 **Overlay always shows "Watching Steam — navigate to a game page…"**  
-→ SteamScout will restart Steam once with debug flags enabled — this is normal  
+→ SteamScout will restart Steam once with debug flags — this is normal  
 → If it persists, fully close Steam, then re-launch SteamScout  
-→ Confirm the debug port works: open a browser and visit `http://localhost:8080/json`  
+→ Confirm the debug port: open a browser and visit `http://localhost:8080/json`
 
-**Steam took a long time to restart**  
-→ Completely normal — Steam downloads updates on restart sometimes  
+**Game search shows "Elasticsearch Not Running"**  
+→ Check your internet connection — game search requires cloud access  
+→ If the issue persists, check `%APPDATA%\SteamScout\backend.log`
 
-**Windows Defender / SmartScreen blocks the download or EXE**  
-→ This is a false positive common with all PyInstaller-built apps — the EXE
-  is not signed with a paid code-signing certificate, so Windows treats any
-  unknown publisher as suspicious  
-→ Click **"More info"** → **"Run anyway"** on the SmartScreen prompt  
-→ If Defender quarantines the file: open **Windows Security** → **Virus &
-  threat protection** → **Protection history** → find the entry → **Allow**  
-→ You can verify the source yourself — the entire codebase is open on this repo  
+**Search results have no genre chips**  
+→ The catalog enrichment job is still running in the background — wait a few
+  minutes and reopen the search panel
+
+**Windows Defender / SmartScreen blocks the EXE**  
+→ False positive common with PyInstaller apps (no paid code-signing cert)  
+→ Click **"More info"** → **"Run anyway"**  
+→ Or allow it in **Windows Security → Virus & threat protection → Protection history**
 
 ---
 
@@ -185,17 +208,21 @@ lookups, scoring logic, performance estimation, and min-only edge cases.
 
 ```
 SteamScout/
-├── SteamScout.pyw     — Main entry point (system tray app)
-├── Backend.py         — CEF URL reader, spec collector, Steam API, WebSocket server
-├── Overlay.py         — Floating pywebview overlay (Edge WebView2 / Chromium)
-├── overlay_ui.html    — Overlay front-end (HTML / CSS / JS)
-├── SteamScoutIcon.png — Application icon (PNG)
-├── build.py           — PyInstaller build script
-├── Requirements.txt   — Python packages
+├── SteamScout.pyw       — Main entry point (system tray app)
+├── Backend.py           — CEF reader, spec collector, Steam API, WebSocket server
+├── Overlay.py           — Floating pywebview overlay + search API bridge
+├── overlay_ui.html      — Overlay front-end (HTML / CSS / JS)
+├── search/
+│   ├── es_client.py     — Elasticsearch wrapper (graceful no-op when ES is down)
+│   ├── catalog.py       — Background Steam + SteamSpy catalog indexer
+│   └── service.py       — search() and check_game() business logic
+├── SteamScoutIcon.png   — Application icon
+├── build.py             — PyInstaller build script
+├── Requirements.txt     — Python packages
 ├── tests/
-│   └── test_backend.py — 113 unit tests for the backend engine
+│   └── test_backend.py  — 113 unit tests
 └── README.md
 ```
 
-User settings are stored in `%APPDATA%\SteamScout\overlay_settings.json`
-(not in the install directory).
+User settings: `%APPDATA%\SteamScout\overlay_settings.json`  
+Backend log: `%APPDATA%\SteamScout\backend.log`

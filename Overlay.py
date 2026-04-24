@@ -19,6 +19,45 @@ import requests
 import websockets
 import webview                           # pywebview >= 5.0
 
+# Search service — initialized lazily on first use (ES may not be installed).
+_search_service = None
+_catalog_manager = None
+
+def _init_search():
+    """Initialize the search service and catalog manager (called once)."""
+    global _search_service, _catalog_manager
+    if _search_service is not None:
+        return
+
+    try:
+        import Backend
+        from search.es_client import ESClient
+        from search.catalog import CatalogManager
+        from search.service import SearchService
+
+        es = ESClient()
+
+        def _pc_specs():
+            Backend._specs_ready.wait(timeout=30)
+            return Backend.pc_specs
+
+        _search_service = SearchService(
+            es_client=es,
+            fetch_requirements_fn=Backend.fetch_requirements,
+            check_compat_fn=Backend.check_compatibility,
+            pc_specs_fn=_pc_specs,
+        )
+        _catalog_manager = CatalogManager(
+            es_client=es,
+            fetch_requirements_fn=Backend.fetch_requirements,
+            check_compat_fn=Backend.check_compatibility,
+            pc_specs_fn=_pc_specs,
+        )
+        _catalog_manager.start()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Search init failed: %s", e)
+
 if sys.platform == "win32":
     import ctypes
     import ctypes.wintypes
@@ -223,6 +262,41 @@ class Api:
     def get_status_colors(self):
         mode = self._ov.settings.get("theme_mode", "dark")
         return STATUS_COLORS.get(mode, STATUS_COLORS["dark"])
+
+    # ── Search API (called async from JS via pywebview bridge) ────────────────
+
+    def search_games(self, query, genres=None):
+        """Full-text + genre search. Returns list of game dicts from ES."""
+        _init_search()
+        if _search_service is None:
+            return []
+        return _search_service.search(query=query or "", genres=genres or [])
+
+    def check_game(self, app_id):
+        """Fetch + run compat check for a specific app_id. May take ~2-5s."""
+        _init_search()
+        if _search_service is None:
+            return None
+        try:
+            return _search_service.check_game(int(app_id))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("check_game error: %s", e)
+            return None
+
+    def get_genres(self):
+        """Return all genre values in the ES index (for filter chips)."""
+        _init_search()
+        if _search_service is None:
+            return []
+        return _search_service.all_genres()
+
+    def get_search_status(self):
+        """Return catalog indexing status dict."""
+        _init_search()
+        if _catalog_manager is None:
+            return {"es_available": False, "phase": "disabled", "indexed": 0, "total": 0, "enriched": 0}
+        return _catalog_manager.status()
 
     def get_system_fonts(self):
         """Return a sorted list of system font family names."""

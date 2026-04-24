@@ -384,6 +384,161 @@ html, body {
 .resize-sw { bottom:0; left:0; width:8px; height:8px; cursor:nesw-resize; }
 .resize-se { bottom:0; right:0; width:8px; height:8px; cursor:nwse-resize; }
 
+/* ── View on Steam button ────────────────────────────────────────────── */
+.steam-store-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 14px; margin-bottom: 7px;
+  background: transparent; color: var(--steam);
+  border: 1px solid var(--steam); border-radius: 20px;
+  font-size: calc(10px * var(--font-scale)); font-family: inherit;
+  cursor: pointer; transition: all 0.18s;
+  opacity: 0.85;
+}
+.steam-store-btn:hover {
+  background: var(--steam); color: var(--bright);
+  opacity: 1; box-shadow: 0 0 10px rgba(27,156,255,0.3);
+  transform: translateY(-1px);
+}
+
+/* ── Search overlay ──────────────────────────────────────────────────── */
+#search-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#search-overlay.open { opacity: 1; pointer-events: auto; }
+.search-bar {
+  display: flex; align-items: center;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  flex-shrink: 0;
+  position: relative;
+  cursor: grab;
+}
+.search-bar:active { cursor: grabbing; }
+.search-bar::after {
+  content: '';
+  position: absolute; bottom: 0; left: 14px; right: 14px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--steam), transparent);
+  opacity: 0.25;
+}
+.search-bar .title { color: var(--steam); font-weight: 700; font-size: calc(13px * var(--font-scale)); letter-spacing: 1.2px; text-shadow: 0 0 16px rgba(27,156,255,0.3); }
+.search-bar .spacer { flex: 1; }
+
+.search-controls {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px 6px;
+  flex-shrink: 0;
+}
+#search-input {
+  flex: 1;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 7px 14px;
+  font-size: calc(12px * var(--font-scale)); font-family: inherit;
+  outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+}
+#search-input:focus { border-color: var(--steam); box-shadow: 0 0 0 2px rgba(27,156,255,0.15); }
+#search-input::placeholder { color: var(--dim); }
+
+#search-status-line {
+  padding: 0 14px 6px;
+  font-size: calc(10px * var(--font-scale)); color: var(--dim);
+  flex-shrink: 0; min-height: 20px;
+}
+
+#genre-chips-wrap {
+  padding: 0 14px 8px;
+  display: flex; flex-wrap: wrap; gap: 5px;
+  flex-shrink: 0;
+}
+.genre-chip {
+  padding: 3px 11px;
+  background: var(--surface); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 20px;
+  font-size: calc(9px * var(--font-scale)); font-family: inherit;
+  cursor: pointer; transition: all 0.15s;
+}
+.genre-chip:hover { color: var(--text); border-color: var(--steam); }
+.genre-chip.active { background: var(--steam); color: var(--bright); border-color: var(--steam); font-weight: 700; }
+
+#search-body {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 0 14px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface2) transparent;
+}
+#search-body::-webkit-scrollbar { width: 8px; }
+#search-body::-webkit-scrollbar-track { background: transparent; }
+#search-body::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 4px; border: 2px solid var(--bg); }
+#search-body::-webkit-scrollbar-thumb:hover { background: var(--steam); }
+
+.game-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer; transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  animation: fadeSlideIn 0.18s ease both;
+}
+.game-card:hover { border-color: var(--steam); transform: translateX(2px); box-shadow: var(--shadow-sm); }
+
+.game-thumb {
+  width: 80px; height: 37px; object-fit: cover;
+  border-radius: 4px; flex-shrink: 0;
+  background: var(--surface2);
+}
+.game-thumb-placeholder {
+  width: 80px; height: 37px; flex-shrink: 0;
+  border-radius: 4px; background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.game-card-info { flex: 1; min-width: 0; }
+.game-card-name {
+  font-size: calc(11px * var(--font-scale)); font-weight: 700;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.game-card-meta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.genre-tag {
+  font-size: calc(8px * var(--font-scale)); color: var(--dim);
+  background: var(--surface2); border-radius: 3px;
+  padding: 1px 5px;
+}
+.run-badge {
+  font-size: calc(8px * var(--font-scale)); font-weight: 700;
+  border-radius: 3px; padding: 1px 6px; letter-spacing: 0.5px;
+}
+.run-badge.pass  { background: var(--green-bg);  color: var(--green);  }
+.run-badge.fail  { background: var(--red-bg);    color: var(--red);    }
+.run-badge.unknown { background: var(--surface2); color: var(--dim); }
+
+.check-game-btn {
+  padding: 5px 12px; flex-shrink: 0;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 20px;
+  font-size: calc(9px * var(--font-scale)); font-family: inherit;
+  cursor: pointer; transition: all 0.15s;
+}
+.check-game-btn:hover { border-color: var(--steam); color: var(--bright); }
+.check-game-btn.loading { color: var(--steam); border-color: var(--steam); }
+
+.search-es-unavailable {
+  text-align: center; padding: 24px 16px;
+  color: var(--dim); font-size: calc(11px * var(--font-scale));
+  line-height: 1.6;
+}
+.search-es-unavailable strong { color: var(--yellow); display: block; margin-bottom: 8px; font-size: calc(12px * var(--font-scale)); }
+.search-es-unavailable code {
+  background: var(--surface2); color: var(--steam);
+  border-radius: 4px; padding: 2px 6px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: calc(10px * var(--font-scale));
+}
+
 /* ── Animations ──────────────────────────────────────────────────────── */
 @keyframes fadeSlideIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
@@ -470,6 +625,7 @@ html, body {
   <div id="titlebar">
     <span class="logo">◆ STEAMSCOUT</span>
     <span class="spacer"></span>
+    <button class="bar-btn" id="btn-search" title="Search Games">🔍</button>
     <button class="bar-btn" id="btn-settings" title="Settings">⚙</button>
     <button class="bar-btn close" id="btn-close" title="Close">✕</button>
   </div>
@@ -477,6 +633,21 @@ html, body {
   <div id="content-wrap">
     <div id="content"></div>
   </div>
+</div>
+
+<!-- Search panel -->
+<div id="search-overlay">
+  <div class="search-bar" id="search-titlebar">
+    <span class="title">🔍 GAME SEARCH</span>
+    <span class="spacer"></span>
+    <button class="bar-btn close" id="btn-search-close" title="Close">✕</button>
+  </div>
+  <div class="search-controls">
+    <input type="text" id="search-input" placeholder="Search any game on Steam..." autocomplete="off">
+  </div>
+  <div id="search-status-line"></div>
+  <div id="genre-chips-wrap"></div>
+  <div id="search-body"></div>
 </div>
 
 <!-- Settings panel (slides over content) -->
@@ -616,6 +787,13 @@ window.SS = {
 
     let html = "";
 
+    // View on Steam button (always shown when we have an app_id)
+    if (data.app_id) {
+      html += `<div style="text-align:right">
+        <button class="steam-store-btn" id="btn-view-steam" data-appid="${data.app_id}">🛒 View on Steam</button>
+      </div>`;
+    }
+
     // Overall badges
     html += '<div class="badges">';
     for (const [key, label] of [["overall_min","MINIMUM"],["overall_rec","RECOMMENDED"]]) {
@@ -636,6 +814,15 @@ window.SS = {
     html += '<div id="tab-content"></div>';
 
     $content.innerHTML = html;
+
+    // Wire View on Steam button
+    const $steamBtn = document.getElementById("btn-view-steam");
+    if ($steamBtn) {
+      $steamBtn.onclick = () => {
+        if (window.pywebview)
+          window.pywebview.api.open_url(`https://store.steampowered.com/app/${$steamBtn.dataset.appid}/`);
+      };
+    }
 
     // Wire tabs
     $content.querySelectorAll(".tab-btn").forEach(btn => {
@@ -854,6 +1041,224 @@ function openSettings() {
 function closeSettings() {
   $settingsOverlay.classList.remove("open");
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Search panel
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const $searchOverlay   = document.getElementById("search-overlay");
+const $searchInput     = document.getElementById("search-input");
+const $searchStatusLine = document.getElementById("search-status-line");
+const $genreChipsWrap  = document.getElementById("genre-chips-wrap");
+const $searchBody      = document.getElementById("search-body");
+
+let _searchResults    = [];
+let _selectedGenres   = [];
+let _genresLoaded     = false;
+let _searchDebounce   = null;
+let _searchBusy       = false;
+
+/* ── Open / close ──────────────────────────────────────────────────── */
+
+function openSearch() {
+  $searchOverlay.classList.add("open");
+  setTimeout(() => $searchInput.focus(), 60);
+  if (!_genresLoaded) loadGenres();
+  if (!$searchInput.value && !_searchResults.length) renderSearchIdle();
+}
+
+function closeSearch() {
+  $searchOverlay.classList.remove("open");
+}
+
+document.getElementById("btn-search").onclick = () => openSearch();
+document.getElementById("btn-search-close").onclick = () => closeSearch();
+
+/* Drag the search panel by its title bar */
+document.getElementById("search-titlebar").addEventListener("mousedown", e => {
+  if (e.target.closest(".bar-btn")) return;
+  e.preventDefault();
+  if (window.pywebview) window.pywebview.api.start_native_drag();
+});
+
+/* ── Genre chips ───────────────────────────────────────────────────── */
+
+async function loadGenres() {
+  _genresLoaded = true;
+  try {
+    if (!window.pywebview) return;
+    const status = await window.pywebview.api.get_search_status();
+    if (!status.es_available) { renderESUnavailable(); return; }
+    const genres = await window.pywebview.api.get_genres();
+    renderGenreChips(genres);
+  } catch(e) { /* ES may not be ready yet */ }
+}
+
+function renderGenreChips(genres) {
+  if (!genres || !genres.length) { $genreChipsWrap.innerHTML = ""; return; }
+  $genreChipsWrap.innerHTML = genres.map(g =>
+    `<button class="genre-chip${_selectedGenres.includes(g) ? " active" : ""}" data-genre="${esc(g)}">${esc(g)}</button>`
+  ).join("");
+  $genreChipsWrap.querySelectorAll(".genre-chip").forEach(chip => {
+    chip.onclick = () => {
+      const g = chip.dataset.genre;
+      if (_selectedGenres.includes(g)) {
+        _selectedGenres = _selectedGenres.filter(x => x !== g);
+      } else {
+        _selectedGenres.push(g);
+      }
+      chip.classList.toggle("active", _selectedGenres.includes(g));
+      doSearch();
+    };
+  });
+}
+
+/* ── Search input ──────────────────────────────────────────────────── */
+
+$searchInput.addEventListener("input", () => {
+  clearTimeout(_searchDebounce);
+  _searchDebounce = setTimeout(doSearch, 280);
+});
+
+$searchInput.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeSearch();
+});
+
+async function doSearch() {
+  if (!window.pywebview) return;
+  const query = $searchInput.value.trim();
+
+  $searchStatusLine.textContent = "Searching...";
+  $searchStatusLine.style.color = "var(--steam)";
+  $searchBody.innerHTML = "";
+
+  try {
+    const status = await window.pywebview.api.get_search_status();
+    if (!status.es_available) { renderESUnavailable(); return; }
+
+    const results = await window.pywebview.api.search_games(query, _selectedGenres);
+    _searchResults = results || [];
+    renderSearchResults(_searchResults);
+  } catch(e) {
+    $searchStatusLine.textContent = "Search error — is Elasticsearch running?";
+    $searchStatusLine.style.color = "var(--yellow)";
+  }
+}
+
+/* ── Results rendering ─────────────────────────────────────────────── */
+
+function renderSearchIdle() {
+  $searchStatusLine.textContent = "Type to search across all Steam games...";
+  $searchStatusLine.style.color = "var(--dim)";
+  $searchBody.innerHTML = "";
+}
+
+function renderSearchResults(results) {
+  const n = results.length;
+  $searchStatusLine.style.color = "var(--dim)";
+
+  if (!n) {
+    $searchStatusLine.textContent = "No results found.";
+    $searchBody.innerHTML = `<div style="text-align:center;padding:20px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games matched your search.</div>`;
+    return;
+  }
+
+  const genreStatus = window._catalogStatus || {};
+  const enriched = genreStatus.enriched || 0;
+  $searchStatusLine.textContent = `${n} result${n !== 1 ? "s" : ""}${enriched ? "  ·  " + enriched.toLocaleString() + " games pre-checked" : ""}`;
+
+  $searchBody.innerHTML = results.map((g, i) => {
+    const cc = g.compat_cache || {};
+    const min = cc.overall_min;
+    let badge = "";
+    if (min === "pass")  badge = `<span class="run-badge pass">✓ CAN RUN</span>`;
+    else if (min === "fail") badge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
+    else badge = `<span class="run-badge unknown">? UNCHECKED</span>`;
+
+    const genres = (g.genres || []).slice(0, 3).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
+
+    const thumb = g.header_image
+      ? `<img class="game-thumb" src="${esc(g.header_image)}" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="game-thumb-placeholder"></div>`;
+
+    return `<div class="game-card" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
+      ${thumb}
+      <div class="game-card-info">
+        <div class="game-card-name">${esc(g.name || "Unknown Game")}</div>
+        <div class="game-card-meta">${genres} ${badge}</div>
+      </div>
+      <button class="check-game-btn" data-appid="${g.app_id}">CHECK</button>
+    </div>`;
+  }).join("");
+
+  $searchBody.querySelectorAll(".check-game-btn").forEach(btn => {
+    btn.onclick = async e => {
+      e.stopPropagation();
+      await runSearchCheck(parseInt(btn.dataset.appid), btn);
+    };
+  });
+  $searchBody.querySelectorAll(".game-card").forEach(card => {
+    card.onclick = async () => {
+      const btn = card.querySelector(".check-game-btn");
+      if (btn) await runSearchCheck(parseInt(btn.dataset.appid), btn);
+    };
+  });
+}
+
+async function runSearchCheck(appId, btn) {
+  if (_searchBusy) return;
+  _searchBusy = true;
+
+  const originalText = btn ? btn.textContent : "";
+  if (btn) { btn.textContent = "..."; btn.classList.add("loading"); }
+
+  try {
+    if (!window.pywebview) return;
+    // Close search, show loading in main view, then display result
+    const cardName = btn ? btn.closest(".game-card")?.querySelector(".game-card-name")?.textContent : `AppID ${appId}`;
+    closeSearch();
+    $status.textContent = `⟳  Checking compatibility for ${cardName}...`;
+    $status.style.color = "var(--blue)";
+    $status.classList.add("waiting");
+    $content.innerHTML = "";
+
+    const result = await window.pywebview.api.check_game(appId);
+    if (result) {
+      window.SS.showResult(result);
+    } else {
+      $status.textContent = `⚠  No system requirements found for this game.`;
+      $status.style.color = "var(--yellow)";
+      $status.classList.remove("waiting");
+    }
+  } catch(e) {
+    $status.textContent = `⚠  Failed to check game compatibility.`;
+    $status.style.color = "var(--yellow)";
+    $status.classList.remove("waiting");
+  } finally {
+    _searchBusy = false;
+    if (btn) { btn.textContent = originalText; btn.classList.remove("loading"); }
+  }
+}
+
+function renderESUnavailable() {
+  $searchStatusLine.textContent = "";
+  $searchBody.innerHTML = `<div class="search-es-unavailable">
+    <strong>⚠ Elasticsearch Not Running</strong>
+    To enable game search, install and start Elasticsearch, then restart SteamScout.<br><br>
+    <b>Quick start:</b><br>
+    Download from <code>elastic.co/downloads/elasticsearch</code><br>
+    Then run: <code>bin\\elasticsearch.bat</code><br><br>
+    Or use Elastic Cloud (set <code>STEAMSCOUT_ES_CLOUD_ID</code> + <code>STEAMSCOUT_ES_API_KEY</code>).
+  </div>`;
+}
+
+/* Periodically refresh catalog status for the results line */
+setInterval(async () => {
+  if (!$searchOverlay.classList.contains("open") || !window.pywebview) return;
+  try {
+    window._catalogStatus = await window.pywebview.api.get_search_status();
+  } catch(e) {}
+}, 8000);
 
 function renderSettingsBody() {
   const s = _settings;

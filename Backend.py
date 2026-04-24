@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import os
+import threading
 from typing import Optional, Tuple
 
 # Suppress console windows from subprocess calls (reduces AV false positives)
@@ -1265,6 +1266,8 @@ def check_compatibility(pc: dict, reqs: dict) -> dict:
 
 CLIENTS: set = set()
 pc_specs: dict = {}
+# Set once collect_pc_specs() finishes so search threads can safely wait.
+_specs_ready = threading.Event()
 
 
 async def ws_handler(websocket):
@@ -1371,6 +1374,7 @@ async def main():
     global pc_specs
     loop     = asyncio.get_event_loop()
     pc_specs = await loop.run_in_executor(None, collect_pc_specs)
+    _specs_ready.set()
     log.info(f"WebSocket server starting on ws://{WS_HOST}:{WS_PORT}")
     for attempt in range(5):
         try:
