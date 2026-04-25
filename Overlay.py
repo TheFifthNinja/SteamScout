@@ -20,8 +20,9 @@ import websockets
 import webview                           # pywebview >= 5.0
 
 # Search service — initialized lazily on first use (ES may not be installed).
-_search_service = None
+_search_service  = None
 _catalog_manager = None
+_user_checked_ids: list = []  # app_ids the user has checked this session
 
 def _init_search():
     """Initialize the search service and catalog manager (called once)."""
@@ -265,12 +266,12 @@ class Api:
 
     # ── Search API (called async from JS via pywebview bridge) ────────────────
 
-    def search_games(self, query, genres=None):
-        """Full-text + genre search. Returns list of game dicts from ES."""
+    def search_games(self, query, genres=None, tags=None):
+        """Full-text search across name, tags, developer, publisher."""
         _init_search()
         if _search_service is None:
             return []
-        return _search_service.search(query=query or "", genres=genres or [])
+        return _search_service.search(query=query or "", genres=genres or [], tags=tags or [])
 
     def check_game(self, app_id):
         """Fetch + run compat check for a specific app_id. May take ~2-5s."""
@@ -278,7 +279,12 @@ class Api:
         if _search_service is None:
             return None
         try:
-            return _search_service.check_game(int(app_id))
+            result = _search_service.check_game(int(app_id))
+            if result:
+                aid = int(app_id)
+                if aid not in _user_checked_ids:
+                    _user_checked_ids.append(aid)
+            return result
         except Exception as e:
             import logging
             logging.getLogger(__name__).error("check_game error: %s", e)
@@ -291,12 +297,68 @@ class Api:
             return []
         return _search_service.all_genres()
 
+    def get_tags(self):
+        """Return top 50 most common tags (for tag filter chips)."""
+        _init_search()
+        if _search_service is None:
+            return []
+        return _search_service.all_tags()
+
+    def get_catalogue(self, section="sale", country="us", sort="popularity", min_rating=0):
+        """Return games for a catalogue section (sale, trending, new_releases, recommended, or genre)."""
+        _init_search()
+        if _search_service is None:
+            return []
+        try:
+            if section == "recommended":
+                return _search_service.get_recommendations(
+                    _user_checked_ids, sort=sort, min_rating=int(min_rating or 0)
+                )
+            return _search_service.get_catalogue(
+                section, country=country, sort=sort, min_rating=int(min_rating or 0)
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("get_catalogue error: %s", e)
+            return []
+
     def get_search_status(self):
         """Return catalog indexing status dict."""
         _init_search()
         if _catalog_manager is None:
             return {"es_available": False, "phase": "disabled", "indexed": 0, "total": 0, "enriched": 0}
         return _catalog_manager.status()
+
+    def detect_steam_country(self) -> str:
+        """
+        Detect the user's Steam pricing region from their public IP.
+        Uses ip-api.com (free, no key) — the same IP Steam sees when it auto-prices.
+        Returns a lowercase ISO 3166-1 alpha-2 country code, e.g. 'au', 'gb', 'de'.
+        Falls back to 'us' on any error.
+        """
+        try:
+            r = requests.get(
+                "http://ip-api.com/json?fields=countryCode",
+                timeout=5,
+                headers={"User-Agent": "SteamScout/1.0"},
+            )
+            code = r.json().get("countryCode", "US").lower()
+            return code
+        except Exception:
+            return "us"
+
+    def get_game_image(self, app_id):
+        """Proxy Steam CDN header image through Python → base64 data URL."""
+        import base64
+        url = f"https://cdn.akamai.steamstatic.com/steam/apps/{int(app_id)}/header.jpg"
+        try:
+            r = requests.get(url, timeout=6, headers={"User-Agent": "SteamScout/1.0"})
+            if r.status_code == 200 and r.content:
+                b64 = base64.b64encode(r.content).decode("ascii")
+                return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            pass
+        return ""
 
     def get_system_fonts(self):
         """Return a sorted list of system font family names."""

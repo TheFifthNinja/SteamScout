@@ -108,6 +108,7 @@ class CatalogManager:
                     {
                         "app_id": a["appid"],
                         "name": a["name"],
+                        "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{a['appid']}/header.jpg",
                         "genres": [],
                         "tags": [],
                         "requirements_cached": False,
@@ -158,13 +159,26 @@ class CatalogManager:
                     tags_raw = info.get("tags") or {}
                     tags = list(tags_raw.keys())[:20] if isinstance(tags_raw, dict) else []
 
+                    owners_str = info.get("owners") or "0"
+                    try:
+                        popularity = int(owners_str.split("..")[0].strip().replace(",", ""))
+                    except (ValueError, TypeError):
+                        popularity = 0
+
+                    pos = info.get("positive") or 0
+                    neg = info.get("negative") or 0
+                    rating = round(pos / (pos + neg) * 100) if (pos + neg) > 0 else 0
+
                     docs.append({
                         "app_id": app_id,
                         "name": info.get("name", ""),
+                        "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg",
                         "genres": genres,
                         "tags": tags,
                         "developer": info.get("developer", ""),
                         "publisher": info.get("publisher", ""),
+                        "popularity": popularity,
+                        "rating": rating,
                         "requirements_cached": False,
                     })
 
@@ -230,6 +244,7 @@ class CatalogManager:
                 doc.update({
                     "name": reqs.get("name", doc.get("name", "")),
                     "header_image": reqs.get("header_image", ""),
+                    "app_type": reqs.get("app_type", "game"),
                     "min_reqs": reqs.get("minimum", {}),
                     "rec_reqs": reqs.get("recommended", {}),
                     "requirements_cached": True,

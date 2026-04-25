@@ -539,6 +539,172 @@ html, body {
   font-size: calc(10px * var(--font-scale));
 }
 
+/* ── Catalogue overlay ───────────────────────────────────────────────── */
+#cat-overlay {
+  position: fixed; inset: 0; z-index: 85;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#cat-overlay.open { opacity: 1; pointer-events: auto; }
+
+.cat-tabs {
+  display: flex; gap: 5px; padding: 8px 14px;
+  overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: none;
+}
+.cat-tabs::-webkit-scrollbar { display: none; }
+.cat-tab {
+  padding: 4px 12px; border-radius: 20px;
+  background: var(--surface); color: var(--dim);
+  border: 1px solid var(--border);
+  font-size: calc(9px * var(--font-scale)); font-family: inherit;
+  white-space: nowrap; cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cat-tab:hover { color: var(--text); border-color: var(--steam); }
+.cat-tab.active { background: var(--steam); color: var(--bright); border-color: var(--steam); font-weight: 700; }
+
+#cat-grid {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 8px 14px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+  gap: 10px; align-content: start;
+  scrollbar-width: thin; scrollbar-color: var(--surface2) transparent;
+}
+#cat-grid::-webkit-scrollbar { width: 8px; }
+#cat-grid::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 4px; border: 2px solid var(--bg); }
+#cat-grid::-webkit-scrollbar-thumb:hover { background: var(--steam); }
+
+.cat-card {
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  cursor: pointer; transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  animation: fadeSlideIn 0.18s ease both;
+}
+.cat-card:hover { border-color: var(--steam); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.cat-thumb-wrap { position: relative; }
+.cat-thumb { width: 100%; aspect-ratio: 460/215; object-fit: cover; display: block; background: var(--surface2); image-rendering: auto; }
+.cat-thumb.broken { background: var(--surface2); }
+.cat-discount-badge {
+  position: absolute; top: 4px; right: 4px;
+  background: #4c9a2a; color: #fff; font-weight: 700;
+  font-size: 9px; padding: 2px 5px; border-radius: 3px;
+  letter-spacing: 0.3px;
+}
+.cat-dlc-badge {
+  position: absolute; top: 4px; left: 4px;
+  background: rgba(0,0,0,0.75); color: #aaa; font-weight: 700;
+  font-size: 8px; padding: 2px 5px; border-radius: 3px;
+  letter-spacing: 0.6px; border: 1px solid rgba(255,255,255,0.15);
+  text-transform: uppercase;
+}
+.cat-card-body { padding: 6px 7px 7px; display: flex; flex-direction: column; gap: 5px; }
+.cat-card-name {
+  font-size: calc(9px * var(--font-scale)); font-weight: 700;
+  color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cat-card-footer { display: flex; align-items: center; gap: 4px; justify-content: space-between; }
+.cat-price-wrap { display: flex; align-items: baseline; gap: 3px; flex: 1; min-width: 0; }
+.cat-original-price { text-decoration: line-through; color: var(--dim); font-size: 8px; }
+.cat-price { font-size: calc(9px * var(--font-scale)); font-weight: 700; }
+.cat-price.free { color: var(--green); }
+.cat-price.discounted { color: var(--green); }
+.cat-price.full { color: var(--dim); }
+.cat-check { font-size: calc(8px * var(--font-scale)) !important; padding: 3px 7px !important; flex-shrink: 0; }
+
+.cat-genre-section {
+  flex-shrink: 0; padding: 0 14px 8px;
+  border-top: 1px solid var(--border);
+}
+.cat-genre-header {
+  display: flex; align-items: center; padding: 6px 0 5px; gap: 8px;
+}
+.cat-genre-label {
+  font-size: calc(8px * var(--font-scale)); font-weight: 700;
+  color: var(--dim); text-transform: uppercase; letter-spacing: 0.8px;
+  flex-shrink: 0;
+}
+.cat-sort-row { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.cat-sort-btn {
+  padding: 2px 8px; border-radius: 20px;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border);
+  font-size: calc(7px * var(--font-scale)); font-family: inherit;
+  cursor: pointer; flex-shrink: 0; transition: all 0.15s;
+}
+.cat-sort-btn:hover { color: var(--text); border-color: var(--steam); }
+.cat-sort-btn.active { background: var(--steam); color: var(--bright); border-color: var(--steam); font-weight: 700; }
+.cat-genre-row {
+  display: flex; gap: 5px;
+  overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  padding-bottom: 4px;
+}
+.cat-genre-row::-webkit-scrollbar { height: 4px; }
+.cat-genre-row::-webkit-scrollbar-track { background: transparent; }
+.cat-genre-row::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.cat-genre-row::-webkit-scrollbar-thumb:hover { background: var(--steam); }
+.cat-genre-loading { font-size: calc(8px * var(--font-scale)); color: var(--dim); align-self: center; }
+.cat-genre-chip {
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border);
+  font-size: calc(8px * var(--font-scale)); font-family: inherit;
+  white-space: nowrap; cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cat-genre-chip:hover { color: var(--text); border-color: var(--steam); }
+.cat-genre-chip.active { background: var(--steam); color: var(--bright); border-color: var(--steam); font-weight: 700; }
+
+.cat-price-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 14px 5px; overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: none; border-top: 1px solid var(--border);
+}
+.cat-price-row::-webkit-scrollbar { display: none; }
+.cat-filter-label {
+  font-size: calc(7px * var(--font-scale)); font-weight: 700;
+  color: var(--dim); text-transform: uppercase; letter-spacing: 0.8px;
+  white-space: nowrap; flex-shrink: 0; margin-right: 3px;
+}
+.cat-price-chip {
+  padding: 2px 9px; border-radius: 20px;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border);
+  font-size: calc(8px * var(--font-scale)); font-family: inherit;
+  white-space: nowrap; cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cat-price-chip:hover { color: var(--text); border-color: var(--steam); }
+.cat-price-chip.active { background: var(--steam); color: var(--bright); border-color: var(--steam); font-weight: 700; }
+
+.cat-country-select {
+  margin-left: auto; flex-shrink: 0;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: calc(8px * var(--font-scale)); font-family: inherit;
+  padding: 2px 4px; cursor: pointer; max-width: 110px;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 5px center;
+  padding-right: 18px;
+}
+.cat-country-select:hover { border-color: var(--steam); color: var(--text); }
+.cat-country-select:focus { outline: none; border-color: var(--steam); }
+.cat-country-select option { background: #1a1a2e; color: #ccc; }
+
+.cat-thumb-placeholder {
+  width: 100%; aspect-ratio: 460/215;
+  background: var(--surface2); display: flex;
+  align-items: center; justify-content: center;
+  color: var(--dim); font-size: 28px; user-select: none;
+}
+
 /* ── Animations ──────────────────────────────────────────────────────── */
 @keyframes fadeSlideIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
@@ -625,6 +791,7 @@ html, body {
   <div id="titlebar">
     <span class="logo">◆ STEAMSCOUT</span>
     <span class="spacer"></span>
+    <button class="bar-btn" id="btn-catalogue" title="Browse Games">🎮</button>
     <button class="bar-btn" id="btn-search" title="Search Games">🔍</button>
     <button class="bar-btn" id="btn-settings" title="Settings">⚙</button>
     <button class="bar-btn close" id="btn-close" title="Close">✕</button>
@@ -648,6 +815,38 @@ html, body {
   <div id="search-status-line"></div>
   <div id="genre-chips-wrap"></div>
   <div id="search-body"></div>
+</div>
+
+<!-- Catalogue panel -->
+<div id="cat-overlay">
+  <div class="search-bar" id="cat-titlebar">
+    <span class="title">🎮 BROWSE GAMES</span>
+    <span class="spacer"></span>
+    <button class="bar-btn close" id="btn-cat-close" title="Close">✕</button>
+  </div>
+  <div class="cat-tabs" id="cat-tabs"></div>
+  <div id="cat-price-row" class="cat-price-row">
+    <span class="cat-filter-label">Price</span>
+    <button class="cat-price-chip active" data-price="all">All</button>
+    <button class="cat-price-chip" data-price="free">Free</button>
+    <button class="cat-price-chip cat-price-tier" data-price="0">Under $5</button>
+    <button class="cat-price-chip cat-price-tier" data-price="1">Under $10</button>
+    <button class="cat-price-chip cat-price-tier" data-price="2">Under $20</button>
+    <button class="cat-price-chip cat-price-tier" data-price="3">Under $30</button>
+    <select id="cat-country-select" class="cat-country-select" title="Country / Region"></select>
+  </div>
+  <div id="cat-genre-section" class="cat-genre-section">
+    <div class="cat-genre-header">
+      <span class="cat-genre-label">Genres</span>
+      <div id="cat-sort-row" class="cat-sort-row">
+        <button class="cat-sort-btn active" data-sort="popularity" data-minrating="0">Popular</button>
+        <button class="cat-sort-btn" data-sort="rating" data-minrating="60">Top Rated</button>
+        <button class="cat-sort-btn" data-sort="name" data-minrating="0">A–Z</button>
+      </div>
+    </div>
+    <div id="cat-genre-row" class="cat-genre-row"><span class="cat-genre-loading">Loading genres...</span></div>
+  </div>
+  <div id="cat-grid"></div>
 </div>
 
 <!-- Settings panel (slides over content) -->
@@ -820,7 +1019,7 @@ window.SS = {
     if ($steamBtn) {
       $steamBtn.onclick = () => {
         if (window.pywebview)
-          window.pywebview.api.open_url(`https://store.steampowered.com/app/${$steamBtn.dataset.appid}/`);
+          window.pywebview.api.open_url(`steam://store/${$steamBtn.dataset.appid}`);
       };
     }
 
@@ -1168,8 +1367,9 @@ function renderSearchResults(results) {
   $searchStatusLine.textContent = `${n} result${n !== 1 ? "s" : ""}${enriched ? "  ·  " + enriched.toLocaleString() + " games pre-checked" : ""}`;
 
   $searchBody.innerHTML = results.map((g, i) => {
-    const cc = g.compat_cache || {};
-    const min = cc.overall_min;
+    // Only show compat status the CURRENT USER personally checked — never pre-cached cloud data.
+    const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
+    const min = myStatus.overall_min;
     let badge = "";
     if (min === "pass")  badge = `<span class="run-badge pass">✓ CAN RUN</span>`;
     else if (min === "fail") badge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
@@ -1177,11 +1377,10 @@ function renderSearchResults(results) {
 
     const genres = (g.genres || []).slice(0, 3).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
 
-    const thumb = g.header_image
-      ? `<img class="game-thumb" src="${esc(g.header_image)}" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="game-thumb-placeholder"></div>`;
+    const imgSrc = g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.app_id}/header.jpg`;
+    const thumb = `<img class="game-thumb" src="${esc(imgSrc)}" loading="lazy" onerror="catImgFallback(this)">`;
 
-    return `<div class="game-card" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
+    return `<div class="game-card" data-appid="${g.app_id}" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
       ${thumb}
       <div class="game-card-info">
         <div class="game-card-name">${esc(g.name || "Unknown Game")}</div>
@@ -1224,6 +1423,8 @@ async function runSearchCheck(appId, btn) {
 
     const result = await window.pywebview.api.check_game(appId);
     if (result) {
+      if (result.compat) _userGameStatus[appId] = result.compat;
+      delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
       window.SS.showResult(result);
     } else {
       $status.textContent = `⚠  No system requirements found for this game.`;
@@ -1259,6 +1460,430 @@ setInterval(async () => {
     window._catalogStatus = await window.pywebview.api.get_search_status();
   } catch(e) {}
 }, 8000);
+
+/* ══════════════════════════════════════════════════════════════════════
+   CATALOGUE — browse by section, on-sale, trending, new, genre
+   ══════════════════════════════════════════════════════════════════════ */
+
+const $catOverlay   = document.getElementById("cat-overlay");
+const $catTabs      = document.getElementById("cat-tabs");
+const $catGrid      = document.getElementById("cat-grid");
+const $catGenreRow  = document.getElementById("cat-genre-row");
+const $catPriceRow     = document.getElementById("cat-price-row");
+const $catCountrySelect = document.getElementById("cat-country-select");
+const $catSortRow      = document.getElementById("cat-sort-row");
+
+let _catSection     = "sale";
+let _catBusy        = false;
+let _catData        = {};   // section → cached games array
+let _catPriceFilter = "all";
+let _catCountry     = localStorage.getItem("steamscout_country") || "auto";
+let _catSort        = "popularity";
+let _catMinRating   = 0;
+
+// country code → { label, symbol, dec (decimal places), tiers (price thresholds in display units) }
+const STEAM_COUNTRIES = [
+  { code:"us",  label:"United States",    symbol:"$",    dec:2, tiers:[5,    10,    20,    30   ] },
+  { code:"gb",  label:"United Kingdom",   symbol:"£",    dec:2, tiers:[4,    8,     15,    25   ] },
+  { code:"de",  label:"Germany",          symbol:"€",    dec:2, tiers:[5,    10,    20,    30   ] },
+  { code:"fr",  label:"France",           symbol:"€",    dec:2, tiers:[5,    10,    20,    30   ] },
+  { code:"au",  label:"Australia",        symbol:"A$",   dec:2, tiers:[8,    15,    30,    45   ] },
+  { code:"ca",  label:"Canada",           symbol:"CA$",  dec:2, tiers:[7,    14,    25,    40   ] },
+  { code:"br",  label:"Brazil",           symbol:"R$",   dec:2, tiers:[25,   50,    100,   150  ] },
+  { code:"ru",  label:"Russia",           symbol:"₽",    dec:2, tiers:[400,  800,   1500,  2500 ] },
+  { code:"tr",  label:"Turkey",           symbol:"₺",    dec:2, tiers:[50,   100,   200,   350  ] },
+  { code:"ar",  label:"Argentina",        symbol:"$",    dec:2, tiers:[1000, 2000,  4000,  6000 ] },
+  { code:"mx",  label:"Mexico",           symbol:"Mex$", dec:2, tiers:[100,  200,   400,   600  ] },
+  { code:"jp",  label:"Japan",            symbol:"¥",    dec:0, tiers:[500,  1000,  2000,  3000 ] },
+  { code:"kr",  label:"South Korea",      symbol:"₩",    dec:0, tiers:[5000, 10000, 20000, 30000] },
+  { code:"cn",  label:"China",            symbol:"¥",    dec:2, tiers:[35,   70,    130,   200  ] },
+  { code:"in",  label:"India",            symbol:"₹",    dec:2, tiers:[400,  800,   1500,  2500 ] },
+  { code:"sg",  label:"Singapore",        symbol:"S$",   dec:2, tiers:[7,    14,    28,    45   ] },
+  { code:"nz",  label:"New Zealand",      symbol:"NZ$",  dec:2, tiers:[8,    16,    30,    50   ] },
+  { code:"no",  label:"Norway",           symbol:"kr",   dec:2, tiers:[55,   110,   220,   330  ] },
+  { code:"se",  label:"Sweden",           symbol:"kr",   dec:2, tiers:[55,   110,   220,   330  ] },
+  { code:"pl",  label:"Poland",           symbol:"zł",   dec:2, tiers:[20,   40,    85,    130  ] },
+  { code:"ua",  label:"Ukraine",          symbol:"₴",    dec:2, tiers:[200,  400,   800,   1300 ] },
+  { code:"id",  label:"Indonesia",        symbol:"Rp",   dec:0, tiers:[75000,150000,300000,500000]},
+  { code:"ph",  label:"Philippines",      symbol:"₱",    dec:2, tiers:[280,  560,   1100,  1700 ] },
+  { code:"th",  label:"Thailand",         symbol:"฿",    dec:2, tiers:[175,  350,   700,   1050 ] },
+  { code:"my",  label:"Malaysia",         symbol:"RM",   dec:2, tiers:[22,   44,    88,    135  ] },
+  { code:"za",  label:"South Africa",     symbol:"R",    dec:2, tiers:[90,   180,   360,   550  ] },
+];
+
+const STEAM_GENRES_FALLBACK = [
+  "Action","Adventure","Casual","Early Access","Free to Play",
+  "Indie","Massively Multiplayer","RPG","Racing","Simulation","Sports","Strategy"
+];
+
+function getCurrentCountry() {
+  if (_catCountry === "auto") return STEAM_COUNTRIES[0]; // US until detected
+  return STEAM_COUNTRIES.find(c => c.code === _catCountry) || STEAM_COUNTRIES[0];
+}
+
+function fmtCatPrice(cents) {
+  if (!cents && cents !== 0) return "";
+  const cc = getCurrentCountry();
+  if (cc.dec === 0) return `${cc.symbol}${Math.round(cents).toLocaleString()}`;
+  return `${cc.symbol}${(cents / 100).toFixed(cc.dec)}`;
+}
+
+function updatePriceTierLabels() {
+  const cc = getCurrentCountry();
+  $catPriceRow.querySelectorAll(".cat-price-tier").forEach((btn, i) => {
+    const t = cc.tiers[i];
+    btn.textContent = `Under ${cc.symbol}${t.toLocaleString()}`;
+  });
+}
+
+// Compat results for games the CURRENT USER has personally checked this session.
+// Keys are app_id (number or string), values are the compat object from check_game().
+// Used instead of ES compat_cache so every user sees results for their own PC specs.
+const _userGameStatus = {};
+
+const CAT_SECTIONS = [
+  { id: "sale",         label: "🏷️ On Sale"  },
+  { id: "trending",     label: "🔥 Trending"  },
+  { id: "new_releases", label: "🆕 New"       },
+  { id: "recommended",  label: "⭐ For You"   },
+];
+
+function openCatalogue() {
+  closeSearch();
+  $catOverlay.classList.add("open");
+  detectAndApplyCountry();  // No-op after first run; silently sets country from IP
+  if (_catData[_catSection]) {
+    renderCatCards(_catData[_catSection]);
+  } else {
+    loadCatSection(_catSection);
+  }
+  if (!_catGenresLoaded) loadCatGenreTabs();
+}
+
+function closeCatalogue() {
+  $catOverlay.classList.remove("open");
+}
+
+let _catGenresLoaded = false;
+
+function switchCatSection(sectionId) {
+  _catSection = sectionId;
+  $catTabs.querySelectorAll(".cat-tab").forEach(t =>
+    t.classList.toggle("active", t.dataset.section === sectionId));
+  $catGenreRow.querySelectorAll(".cat-genre-chip").forEach(c =>
+    c.classList.toggle("active", c.dataset.genre === sectionId));
+  // Recommended always re-fetches (personalized, depends on sort/minRating).
+  // Other sections use cache when available.
+  if (sectionId !== "recommended" && _catData[sectionId]) {
+    renderCatCards(_catData[sectionId]);
+  } else {
+    loadCatSection(sectionId);
+  }
+}
+
+async function loadCatSection(section) {
+  if (!window.pywebview) return;
+  _catSection = section;
+  $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">Loading...</div>`;
+  try {
+    const games = await window.pywebview.api.get_catalogue(section, _catCountry, _catSort, _catMinRating);
+    _catData[section] = games || [];
+    if (!games || !games.length) {
+      $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games found for this filter.</div>`;
+      return;
+    }
+    renderCatCards(games);
+  } catch(e) {
+    $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--yellow);font-size:calc(11px * var(--font-scale))">⚠ Failed to load — check your connection.</div>`;
+  }
+}
+
+const _DLC_NAME_KEYWORDS = ["soundtrack", "ost", "season pass", "dlc", "expansion pack", "content pack", "cosmetic", "skin pack"];
+
+function applyPriceFilter(games) {
+  if (_catPriceFilter === "all") return games;
+  if (_catPriceFilter === "free") return games.filter(g => g.is_free || g.final_price === 0);
+  const cc = getCurrentCountry();
+  const tierIdx = parseInt(_catPriceFilter);
+  const maxDisplay = cc.tiers[tierIdx];
+  return games.filter(g => {
+    // Games with no price data (genre/recommended sections) always pass through.
+    if (g.final_price === undefined || g.final_price === null) return true;
+    if (g.is_free || g.final_price === 0) return true;
+    const displayPrice = cc.dec === 0 ? g.final_price : g.final_price / 100;
+    return displayPrice <= maxDisplay;
+  });
+}
+
+// Populate country selector — Auto-detect first, then explicit countries
+(function() {
+  const autoOpt = document.createElement("option");
+  autoOpt.value = "auto";
+  autoOpt.textContent = "🌍 Auto-detect";
+  if (_catCountry === "auto") autoOpt.selected = true;
+  $catCountrySelect.appendChild(autoOpt);
+
+  STEAM_COUNTRIES.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.code;
+    opt.textContent = `${c.symbol}  ${c.label}`;
+    if (c.code === _catCountry) opt.selected = true;
+    $catCountrySelect.appendChild(opt);
+  });
+})();
+updatePriceTierLabels();
+
+// Country change: clear Steam-section cache and reload
+$catCountrySelect.onchange = () => {
+  _catCountry = $catCountrySelect.value;
+  localStorage.setItem("steamscout_country", _catCountry);
+  updatePriceTierLabels();
+  // Invalidate cached data for Steam-sourced sections (prices are country-specific)
+  ["sale", "trending", "new_releases"].forEach(s => delete _catData[s]);
+  if (["sale", "trending", "new_releases"].includes(_catSection)) {
+    loadCatSection(_catSection);
+  }
+};
+
+// Auto-detect country from the user's IP (same IP Steam sees for pricing).
+// Runs once per session, silently updates the selector and price labels.
+let _countryDetected = false;
+async function detectAndApplyCountry() {
+  if (_countryDetected || _catCountry !== "auto") return;
+  _countryDetected = true;
+  if (!window.pywebview) return;
+  try {
+    const code = await window.pywebview.api.detect_steam_country();
+    const match = STEAM_COUNTRIES.find(c => c.code === code);
+    if (match) {
+      _catCountry = code;
+      localStorage.setItem("steamscout_country", code);
+      $catCountrySelect.value = code;
+      updatePriceTierLabels();
+      // Re-render prices if Steam sections are already loaded
+      ["sale", "trending", "new_releases"].forEach(s => {
+        if (_catData[s]) {
+          delete _catData[s];  // Prices were fetched without cc — reload with detected cc
+        }
+      });
+      if (["sale", "trending", "new_releases"].includes(_catSection)) {
+        loadCatSection(_catSection);
+      }
+    }
+  } catch(e) {}
+}
+
+// Wire up price filter chips
+$catPriceRow.querySelectorAll(".cat-price-chip").forEach(btn => {
+  btn.onclick = () => {
+    _catPriceFilter = btn.dataset.price;
+    $catPriceRow.querySelectorAll(".cat-price-chip").forEach(b =>
+      b.classList.toggle("active", b.dataset.price === _catPriceFilter));
+    const data = _catData[_catSection];
+    if (data) renderCatCards(data);
+  };
+});
+
+// Wire up sort buttons
+$catSortRow.querySelectorAll(".cat-sort-btn").forEach(btn => {
+  btn.onclick = () => {
+    _catSort      = btn.dataset.sort;
+    _catMinRating = parseInt(btn.dataset.minrating || "0");
+    $catSortRow.querySelectorAll(".cat-sort-btn").forEach(b =>
+      b.classList.toggle("active", b.dataset.sort === _catSort));
+    // Steam-sourced sections: sort client-side without re-fetching
+    if (["sale", "trending", "new_releases"].includes(_catSection)) {
+      const data = _catData[_catSection];
+      if (data) {
+        const sorted = [...data];
+        if (_catSort === "name")   sorted.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        if (_catSort === "rating") sorted.sort((a, b) => (b.discount_percent || 0) - (a.discount_percent || 0));
+        renderCatCards(sorted);
+      }
+    } else {
+      // ES-sourced sections: server-side sort — clear cache and reload
+      delete _catData[_catSection];
+      loadCatSection(_catSection);
+    }
+  };
+});
+
+function catImgUrl(appId) {
+  // header.jpg (460×215) exists for virtually every Steam app and matches our aspect-ratio CSS.
+  return `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`;
+}
+
+async function catImgFallback(img) {
+  // Direct CDN load failed — try routing through the Python proxy.
+  // WebView2 (local file mode) may block direct CDN requests while Python's
+  // requests library works fine.
+  if (img.dataset.proxyTried) {
+    _catImgShowPlaceholder(img);
+    return;
+  }
+  img.dataset.proxyTried = "1";
+  if (!window.pywebview) { _catImgShowPlaceholder(img); return; }
+  const appId = img.closest("[data-appid]")?.dataset.appid;
+  if (!appId) { _catImgShowPlaceholder(img); return; }
+  try {
+    const dataUrl = await window.pywebview.api.get_game_image(appId);
+    if (dataUrl && img.parentNode) {
+      img.src = dataUrl;
+    } else {
+      _catImgShowPlaceholder(img);
+    }
+  } catch(e) {
+    _catImgShowPlaceholder(img);
+  }
+}
+
+function _catImgShowPlaceholder(img) {
+  const ph = document.createElement("div");
+  ph.className = "cat-thumb-placeholder";
+  ph.textContent = "🎮";
+  if (img.parentNode) img.parentNode.replaceChild(ph, img);
+}
+
+function isDLC(g) {
+  if (g.app_type && g.app_type !== "game") return true;
+  if ((g.genres || []).some(gr => gr.toLowerCase() === "dlc")) return true;
+  const name = (g.name || "").toLowerCase();
+  return _DLC_NAME_KEYWORDS.some(k => name.includes(k));
+}
+
+function renderCatCards(games) {
+  const filtered = applyPriceFilter(games);
+  if (!filtered.length) {
+    $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games match this filter.</div>`;
+    return;
+  }
+  $catGrid.innerHTML = filtered.map((g, i) => {
+    const hasDiscount = (g.discount_percent || 0) > 0;
+    // Prefer the image URL returned directly from Steam's API; fall back to CDN pattern.
+    const imgUrl  = g.header_image || catImgUrl(g.app_id);
+    const thumb   = `<img class="cat-thumb" src="${esc(imgUrl)}" onerror="catImgFallback(this)">`;
+    const discBadge = hasDiscount ? `<div class="cat-discount-badge">-${g.discount_percent}%</div>` : "";
+    const typeLabel = isDLC(g) ? "DLC" : "GAME";
+    const typeColor = isDLC(g) ? "rgba(0,0,0,0.75)" : "rgba(30,90,160,0.85)";
+    const dlcBadge  = `<div class="cat-dlc-badge" style="background:${typeColor}">${typeLabel}</div>`;
+
+    let priceHtml = "";
+    if (g.is_free) {
+      priceHtml = `<span class="cat-price free">FREE</span>`;
+    } else if (hasDiscount && g.original_price && g.final_price) {
+      priceHtml = `<span class="cat-original-price">${fmtCatPrice(g.original_price)}</span>`
+                + `<span class="cat-price discounted">${fmtCatPrice(g.final_price)}</span>`;
+    } else if (g.final_price) {
+      priceHtml = `<span class="cat-price full">${fmtCatPrice(g.final_price)}</span>`;
+    }
+
+    // Only show compat the current user has verified on their own PC.
+    const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
+    const min = myStatus.overall_min;
+    const runBadge = min === "pass" ? `<span class="run-badge pass" style="font-size:8px;padding:1px 4px">✓</span>`
+                   : min === "fail" ? `<span class="run-badge fail" style="font-size:8px;padding:1px 4px">✗</span>` : "";
+
+    const gameName = esc(g.name || "Unknown");
+    return `<div class="cat-card" data-appid="${g.app_id}" title="${gameName}" style="animation-delay:${Math.min(i*0.02,0.4)}s">
+      <div class="cat-thumb-wrap">${thumb}${discBadge}${dlcBadge}</div>
+      <div class="cat-card-body">
+        <div class="cat-card-name">${gameName}</div>
+        <div class="cat-card-footer">
+          <span class="cat-price-wrap">${priceHtml}</span>
+          ${runBadge}
+          <button class="check-game-btn cat-check" data-appid="${g.app_id}">CHECK</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  $catGrid.querySelectorAll(".cat-check").forEach(btn => {
+    btn.onclick = async e => { e.stopPropagation(); await runCatCheck(parseInt(btn.dataset.appid), btn); };
+  });
+  $catGrid.querySelectorAll(".cat-card").forEach(card => {
+    card.onclick = async e => {
+      if (e.target.closest(".cat-check")) return;
+      await runCatCheck(parseInt(card.dataset.appid), card.querySelector(".cat-check"));
+    };
+  });
+}
+
+async function runCatCheck(appId, btn) {
+  if (_catBusy) return;
+  _catBusy = true;
+  const orig = btn ? btn.textContent : "";
+  if (btn) { btn.textContent = "..."; btn.classList.add("loading"); }
+  try {
+    if (!window.pywebview) return;
+    const name = btn?.closest(".cat-card")?.querySelector(".cat-card-name")?.textContent || `AppID ${appId}`;
+    closeCatalogue();
+    $status.textContent = `⟳  Checking ${name}...`;
+    $status.style.color = "var(--blue)";
+    $status.classList.add("waiting");
+    $content.innerHTML = "";
+    const result = await window.pywebview.api.check_game(appId);
+    if (result) {
+      if (result.compat) _userGameStatus[appId] = result.compat;
+      delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
+      window.SS.showResult(result);
+    } else {
+      $status.textContent = `⚠  No system requirements found.`;
+      $status.style.color = "var(--yellow)";
+      $status.classList.remove("waiting");
+    }
+  } catch(e) {
+    $status.textContent = `⚠  Failed to check compatibility.`;
+    $status.style.color = "var(--yellow)";
+    $status.classList.remove("waiting");
+  } finally {
+    _catBusy = false;
+    if (btn) { btn.textContent = orig; btn.classList.remove("loading"); }
+  }
+}
+
+function _renderGenreChips(list) {
+  $catGenreRow.innerHTML = "";
+  list.forEach(g => {
+    const btn = document.createElement("button");
+    btn.className = "cat-genre-chip";
+    btn.dataset.genre = g;
+    btn.textContent = g;
+    btn.onclick = () => switchCatSection(g);
+    $catGenreRow.appendChild(btn);
+  });
+  _catGenresLoaded = true;
+}
+
+async function loadCatGenreTabs() {
+  try {
+    const genres = window.pywebview
+      ? await window.pywebview.api.get_genres()
+      : null;
+    // Use ES data if available, otherwise fall back to the hardcoded Steam genre list
+    // so genre chips always appear even before the daily GitHub Actions run populates genres.
+    _renderGenreChips((genres && genres.length) ? genres : STEAM_GENRES_FALLBACK);
+  } catch(e) {
+    _renderGenreChips(STEAM_GENRES_FALLBACK);
+  }
+}
+
+// Build static section tabs
+$catTabs.innerHTML = CAT_SECTIONS.map(s =>
+  `<button class="cat-tab${s.id === _catSection ? " active" : ""}" data-section="${s.id}">${s.label}</button>`
+).join("");
+$catTabs.querySelectorAll(".cat-tab").forEach(tab => {
+  tab.onclick = () => switchCatSection(tab.dataset.section);
+});
+
+document.getElementById("btn-catalogue").onclick = () => openCatalogue();
+document.getElementById("btn-cat-close").onclick  = () => closeCatalogue();
+document.getElementById("cat-titlebar").addEventListener("mousedown", e => {
+  if (e.target.closest(".bar-btn")) return;
+  e.preventDefault();
+  if (window.pywebview) window.pywebview.api.start_native_drag();
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
 
 function renderSettingsBody() {
   const s = _settings;

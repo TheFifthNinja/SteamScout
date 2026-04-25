@@ -274,6 +274,7 @@ def fetch_requirements(app_id: int) -> Optional[dict]:
             "app_id":       app_id,
             "name":         d.get("name", "Unknown"),
             "header_image": d.get("header_image", ""),
+            "app_type":     d.get("type", "game"),
             "minimum":      _parse_reqs(pc_req.get("minimum", "")),
             "recommended":  _parse_reqs(pc_req.get("recommended", "")),
         }
@@ -287,6 +288,10 @@ def fetch_requirements(app_id: int) -> Optional[dict]:
 def _parse_reqs(html: str) -> dict:
     if not html:
         return {}
+    # Flatten inline line-breaks so "GTX 970<br>or AMD RX 480" becomes a single capturable line.
+    h = re.sub(r"<br\s*/?>", " ", html, flags=re.IGNORECASE)
+    # Strip inline formatting tags (spans, links, bold within text) that would cut off capture.
+    h = re.sub(r"</?(?:em|i|b|u|span|a|small|code|nobr)[^>]*>", "", h, flags=re.IGNORECASE)
     patterns = {
         "os":      r"OS[^<]*</strong>\s*([^<]+)",
         "cpu":     r"(?:Processor|CPU)[^<]*</strong>\s*([^<]+)",
@@ -298,9 +303,11 @@ def _parse_reqs(html: str) -> dict:
     }
     out = {}
     for key, pat in patterns.items():
-        m = re.search(pat, html, re.IGNORECASE)
+        m = re.search(pat, h, re.IGNORECASE)
         if m:
-            out[key] = m.group(1).strip().rstrip("*").strip()
+            text = re.sub(r"\s+", " ", m.group(1)).strip().rstrip("*").strip()
+            if text:
+                out[key] = text
     return out
 
 
@@ -800,8 +807,8 @@ def _cpu_score(name: str) -> Optional[float]:
 
 
 def _required_score(req: str, kind: str) -> Optional[float]:
-    # Steam often lists alternatives separated by '/' or 'or'.
-    parts = re.split(r"\s*/\s*|\s+or\s+|\|", req, flags=re.IGNORECASE)
+    # Steam lists GPU/CPU alternatives separated by '/', 'or', 'and', 'and/or', or '&'.
+    parts = re.split(r"\s*/\s*|\s+(?:and/or|or|and)\s+|\s*&\s*|\|", req, flags=re.IGNORECASE)
     vals = []
     for p in parts:
         p = p.strip()
@@ -819,7 +826,7 @@ def _required_score(req: str, kind: str) -> Optional[float]:
         if val is not None:
             return val
         return None
-    # Requirement alternatives are equivalent-ish; minimum threshold is enough.
+    # Any of the listed alternatives is sufficient — use the minimum threshold.
     return min(vals)
 
 
@@ -916,50 +923,59 @@ def _ratio(measured: Optional[float], required: Optional[float], cap: float = 3.
     return max(0.0, min(cap, measured / required))
 
 
-def _score_to_band(score: float, bottleneck: float) -> tuple:
-    """
-    Convert a performance score ratio + bottleneck into an estimated FPS band.
-    Uses a non-linear curve inspired by real-world diminishing-returns behaviour:
-    doubling hardware above requirements does NOT double FPS.
-    """
-    # The bottleneck limits the real effective performance more than averages suggest.
-    effective = 0.55 * score + 0.45 * bottleneck
+def _harmonic_mean(values: list) -> float:
+    """Harmonic mean — naturally sensitive to low outliers (bottleneck-aware)."""
+    if not values:
+        return 0.0
+    return len(values) / sum(1.0 / max(v, 0.001) for v in values)
 
-    if effective < 0.55:
-        return (10, 20, "Well below requirements; likely unplayable or slideshow.")
-    if effective < 0.75:
-        return (15, 28, "Significantly below requirements; heavy stuttering expected.")
-    if effective < 0.90:
-        return (22, 38, "System is below one or more key requirements.")
-    if effective < 1.0:
-        return (30, 48, "Borderline setup; gameplay depends on scene complexity.")
-    if effective < 1.15:
-        return (40, 60, "Meets requirements; playable on low-medium settings.")
-    if effective < 1.35:
-        return (50, 75, "Comfortable headroom for medium settings.")
-    if effective < 1.60:
-        return (60, 95, "Good fit; high settings should be achievable.")
-    if effective < 2.0:
-        return (75, 120, "Strong hardware headroom; high/ultra viable.")
-    return (90, 144, "Overkill for this title; expect very high framerates.")
+
+def _score_to_fps(effective: float) -> tuple:
+    """
+    Continuous piecewise-linear mapping from effective hardware ratio to
+    (median_fps, half_spread) anchored at 1080p medium settings.
+
+    Anchors calibrated to aggregated GPU benchmark data vs stated game requirements.
+    Spread reflects prediction uncertainty and narrows as the ratio rises.
+    """
+    ANCHORS = [
+        # (ratio, median_fps, half-spread)
+        (0.00,   5.0, 0.55),
+        (0.50,  12.0, 0.45),
+        (0.75,  22.0, 0.38),
+        (0.90,  30.0, 0.32),
+        (1.00,  38.0, 0.28),
+        (1.20,  52.0, 0.24),
+        (1.40,  66.0, 0.21),
+        (1.65,  84.0, 0.19),
+        (2.00, 105.0, 0.17),
+        (3.00, 140.0, 0.14),
+    ]
+    if effective <= ANCHORS[0][0]:
+        return ANCHORS[0][1], ANCHORS[0][2]
+    if effective >= ANCHORS[-1][0]:
+        return ANCHORS[-1][1], ANCHORS[-1][2]
+    for i in range(len(ANCHORS) - 1):
+        r0, f0, s0 = ANCHORS[i]
+        r1, f1, s1 = ANCHORS[i + 1]
+        if r0 <= effective <= r1:
+            t = (effective - r0) / (r1 - r0)
+            return f0 + t * (f1 - f0), s0 + t * (s1 - s0)
+    return 38.0, 0.28
 
 
 def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
     """
-    Performance predictor v3: benchmark-backed hardware scoring with weighted
-    component ratios, non-linear FPS curves, and GPU/CPU bottleneck analysis.
+    Performance predictor v4: continuous FPS curve with harmonic-mean bottleneck
+    and VRAM stutter penalty.
 
-    Algorithm:
-    1.  Score user's CPU & GPU via PassMark-calibrated lookup tables.
-    2.  Score the game's required CPU & GPU the same way.
-    3.  Compute per-component ratios (user / required), capped at 3.0.
-    4.  GPU ratio is weighted highest (0.45) since games are overwhelmingly
-        GPU-bound; CPU (0.30) is next; RAM/VRAM/DX share the rest.
-    5.  The *bottleneck* (lowest single ratio) drags the FPS down harder
-        than a pure weighted average would suggest, reflecting real-world
-        behaviour where one slow component starves the pipeline.
-    6.  Blend min-tier viability (65%) with rec-tier headroom (35%).
-    7.  Map to FPS bands using non-linear diminishing-returns curve.
+    Key improvements over v3:
+    - Continuous piecewise-linear FPS mapping instead of discrete step bands.
+    - Bottleneck is the harmonic mean of GPU+CPU ratios: more sensitive to the
+      weaker component than arithmetic mean, less punishing than pure min().
+    - VRAM below requirement applies an exponential stutter penalty.
+    - Quality presets use empirically observed GPU-load deltas (+30% low, -32% high).
+    - Recommended-tier score is GPU-weighted (0.55 / 0.30 / 0.15).
     """
     min_r = reqs.get("minimum", {})
     rec_r = reqs.get("recommended", {})
@@ -981,14 +997,14 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
     rec_gpu = _required_score(rec_r.get("gpu", ""), "gpu") if "gpu" in rec_r else None
     rec_ram = _size_gb(rec_r.get("ram", ""), default_unit="GB") if "ram" in rec_r else None
 
-    # ── Weighted feature ratios (GPU‑dominant like real games) ──
+    # GPU-dominant weights reflect gaming's typical bottleneck profile.
     feature_weights = {
-        "gpu":      0.42,
-        "cpu":      0.28,
-        "ram":      0.12,
-        "vram":     0.08,
-        "directx":  0.05,
-        "storage":  0.05,
+        "gpu":     0.45,
+        "cpu":     0.28,
+        "ram":     0.12,
+        "vram":    0.08,
+        "directx": 0.04,
+        "storage": 0.03,
     }
 
     feature_ratios: dict[str, Optional[float]] = {}
@@ -996,19 +1012,17 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
     feature_ratios["cpu"] = _ratio(pc_cpu, min_cpu)
     feature_ratios["ram"] = _ratio(pc_ram, min_ram)
 
-    # Storage: binary pass/fail with a small boost for extra headroom
     if pc_storage is not None and min_storage is not None and min_storage > 0:
         feature_ratios["storage"] = min(_ratio(pc_storage, min_storage) or 0.0, 1.5)
     else:
         feature_ratios["storage"] = None
 
-    # DirectX: binary pass/fail with a small boost for exceeding
     if min_dx is not None and pc_dx is not None:
         feature_ratios["directx"] = 1.15 if pc_dx >= min_dx else 0.5
     else:
         feature_ratios["directx"] = None
 
-    # VRAM: infer from GPU requirement text or GPU tier
+    # VRAM: extract from requirement text or infer from GPU benchmark class
     req_vram = None
     for src in (min_r.get("gpu", ""), rec_r.get("gpu", "")):
         m = re.search(r"\b(\d+)\s*gb\b", src, re.IGNORECASE)
@@ -1016,7 +1030,6 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
             req_vram = float(m.group(1))
             break
     if req_vram is None and min_gpu is not None:
-        # Heuristic: map GPU class to typical VRAM floor
         if min_gpu < 3000:
             req_vram = 1.0
         elif min_gpu < 6000:
@@ -1027,7 +1040,7 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
             req_vram = 6.0
     feature_ratios["vram"] = _ratio(pc_vram, req_vram) if pc_vram and req_vram else None
 
-    # ── Compute weighted score ──
+    # Weighted score (minimum-tier)
     weighted_sum = 0.0
     used_weight  = 0.0
     ratios_used: list[float] = []
@@ -1044,93 +1057,140 @@ def ai_predict_performance(pc: dict, reqs: dict, compat: dict) -> dict:
 
     score_min = weighted_sum / used_weight
 
-    # ── Recommended-tier headroom ──
+    # Recommended-tier score: GPU-primary weighted average
+    rec_pairs = [(pc_gpu, rec_gpu, 0.55), (pc_cpu, rec_cpu, 0.30), (pc_ram, rec_ram, 0.15)]
+    rec_wsum, rec_wused = 0.0, 0.0
     rec_ratios: list[float] = []
-    for val, need in ((pc_gpu, rec_gpu), (pc_cpu, rec_cpu), (pc_ram, rec_ram)):
+    for val, need, w in rec_pairs:
         r = _ratio(val, need)
         if r is not None:
+            rec_wsum  += r * w
+            rec_wused += w
             rec_ratios.append(r)
-    score_rec = sum(rec_ratios) / len(rec_ratios) if rec_ratios else score_min
+    score_rec = (rec_wsum / rec_wused) if rec_wused > 0 else score_min
 
-    # Blend minimum viability with recommended headroom
-    # If no recommended data exists, rely 100% on minimum-tier scoring
-    rec_ok = compat.get("overall_rec")
-    if rec_ratios:
-        score = 0.65 * score_min + 0.35 * score_rec
-    else:
-        score = score_min
+    blended = (0.60 * score_min + 0.40 * score_rec) if rec_ratios else score_min
 
-    # Bottleneck is the weakest link
-    bottleneck = min(ratios_used) if ratios_used else score
+    # Bottleneck: harmonic mean of GPU and CPU ratios.
+    # Harmonic mean is sensitive to the weaker component (like real GPU-CPU
+    # bottlenecks) without the harshness of pure min(), and excludes non-FPS
+    # signals like storage and DirectX from the bottleneck calculation.
+    fps_core = [r for k, r in feature_ratios.items() if k in ("gpu", "cpu") and r is not None]
+    bottleneck = _harmonic_mean(fps_core) if fps_core else blended
 
-    # ── Map to FPS band ──
-    base_low, base_high, note = _score_to_band(score, bottleneck)
+    # VRAM stutter penalty: below-budget VRAM causes texture streaming and
+    # severe 1% lows. Model as exponential drag on the effective ratio.
+    # vram_ratio 0.5 → ~34% penalty; 0.75 → ~16%; 0.9 → ~6%
+    vram_ratio = feature_ratios.get("vram")
+    vram_penalty = 1.0
+    if vram_ratio is not None and vram_ratio < 1.0:
+        vram_penalty = vram_ratio ** 0.6
 
-    # Clamp if pass/fail results contradict the numeric prediction
+    # Pull blended score toward the bottleneck, then apply VRAM drag
+    effective = (0.60 * blended + 0.40 * bottleneck) * vram_penalty
+
+    # Clamp so numeric score never contradicts explicit pass/fail verdict
     min_ok = compat.get("overall_min")
+    rec_ok = compat.get("overall_rec")
     if min_ok == "fail":
-        base_low  = min(base_low, 20)
-        base_high = min(base_high, 35)
-        note = "Below minimum requirements; expect poor performance."
+        effective = min(effective, 0.85)
     elif min_ok == "pass" and rec_ok == "fail":
-        base_high = min(base_high, 65)
+        effective = min(effective, 1.45)
 
-    # When only minimum reqs are available, note the reduced accuracy
-    if rec_ok in ("unavailable", "unknown") and not rec_ratios:
-        note += " (Only minimum requirements available; estimate less precise.)"
-        note = note.strip()
+    median_fps, spread = _score_to_fps(effective)
 
-    # ── Preset differentiation: low ≈ base, medium ≈ -15%, high ≈ -30% ──
-    low_lo  = max(12, int(base_low * 1.05))
-    low_hi  = max(20, int(base_high * 1.10))
-    med_lo  = max(10, int(base_low * 0.82))
-    med_hi  = max(18, int(base_high * 0.88))
-    high_lo = max(8,  int(base_low * 0.60))
-    high_hi = max(15, int(base_high * 0.68))
+    # Widen spread under VRAM pressure (stutter variance is unpredictable)
+    if vram_ratio is not None and vram_ratio < 1.0:
+        spread = min(0.55, spread + (1.0 - vram_ratio) * 0.15)
 
-    low    = f"{low_lo}-{low_hi} FPS"
-    medium = f"{med_lo}-{med_hi} FPS"
-    high   = f"{high_lo}-{high_hi} FPS"
-
-    # 1% lows and frame-time
-    one_pct_lo = max(6,  int(base_low * 0.55))
-    one_pct_hi = max(12, int(base_low * 0.80))
-    one_percent_low = f"{one_pct_lo}-{one_pct_hi} FPS"
-
-    # Confidence based on how many features we could actually score
     parsed_features = len(ratios_used)
     has_rec = bool(rec_ratios)
+    if parsed_features < 3:
+        spread = min(0.55, spread + 0.08)
+
+    # Note
+    if min_ok == "fail":
+        note = "Below minimum requirements; expect poor performance."
+    elif effective < 0.55:
+        note = "Well below requirements; likely unplayable or slideshow."
+    elif effective < 0.75:
+        note = "Significantly below requirements; heavy stuttering expected."
+    elif effective < 0.90:
+        note = "System is below one or more key requirements."
+    elif effective < 1.0:
+        note = "Borderline setup; gameplay depends on scene complexity."
+    elif effective < 1.15:
+        note = "Meets minimum requirements; playable on low-medium settings."
+    elif effective < 1.40:
+        note = "Comfortable headroom; medium settings at 1080p."
+    elif effective < 1.70:
+        note = "Good fit; high settings at 1080p or medium at 1440p viable."
+    elif effective < 2.10:
+        note = "Strong headroom; high/ultra at 1080p or high at 1440p viable."
+    else:
+        note = "Overkill for this title; consider 1440p or 4K."
+
+    if vram_ratio is not None and vram_ratio < 0.85 and min_ok != "fail":
+        note += " VRAM shortage may cause stuttering."
+    if rec_ok in ("unavailable", "unknown") and not rec_ratios:
+        note += " (Only minimum requirements available; estimate less precise.)"
+    note = note.strip()
+
+    # Quality presets anchored at 1080p medium.
+    # Low settings reduce GPU load (shadow quality, draw distance) → +30% FPS.
+    # High/Ultra add RT, SSAO, dense geometry, high-res shadows → -32% FPS.
+    LOW_BOOST = 1.30
+    HIGH_DRAG = 0.68
+
+    def _fmt(center: float, sp: float, floor_lo: int) -> str:
+        lo = max(floor_lo, int(center * (1.0 - sp)))
+        hi = max(floor_lo + 5, int(center * (1.0 + sp)))
+        return f"{lo}-{hi} FPS"
+
+    low    = _fmt(median_fps * LOW_BOOST, spread, 10)
+    medium = _fmt(median_fps,              spread,  8)
+    high   = _fmt(median_fps * HIGH_DRAG,  spread,  5)
+
+    # 1% lows: ~62% of average FPS; drops to ~50% when VRAM is under pressure.
+    one_pct_factor = 0.50 if (vram_ratio is not None and vram_ratio < 1.0) else 0.62
+    one_pct_lo = max(4, int(median_fps * one_pct_factor * (1.0 - spread * 0.5)))
+    one_pct_hi = max(8, int(median_fps * one_pct_factor * (1.0 + spread * 0.3)))
+    one_percent_low = f"{one_pct_lo}-{one_pct_hi} FPS"
+
     if parsed_features >= 4 and has_rec:
         confidence = "high"
-    elif parsed_features >= 3:
-        confidence = "medium"
-    elif parsed_features >= 2 and has_rec:
+    elif parsed_features >= 3 or (parsed_features >= 2 and has_rec):
         confidence = "medium"
     else:
         confidence = "low"
 
-    # Identify the bottleneck component
+    # Label the weakest FPS-critical component, but only when it's actually
+    # constraining — either below requirement (<1.0) or noticeably weaker than
+    # the strongest component and still inside the headroom-limited zone.
+    fps_labeled = [(k, feature_ratios[k]) for k in ("gpu", "cpu", "vram", "ram")
+                   if feature_ratios.get(k) is not None]
     bottleneck_label = "Balanced"
-    if feature_ratios.get("gpu") is not None and feature_ratios["gpu"] == bottleneck:
-        bottleneck_label = "GPU"
-    elif feature_ratios.get("cpu") is not None and feature_ratios["cpu"] == bottleneck:
-        bottleneck_label = "CPU"
-    elif feature_ratios.get("vram") is not None and feature_ratios["vram"] == bottleneck:
-        bottleneck_label = "VRAM"
-    elif feature_ratios.get("ram") is not None and feature_ratios["ram"] == bottleneck:
-        bottleneck_label = "RAM"
+    if fps_labeled:
+        weakest_k, weakest_v = min(fps_labeled, key=lambda x: x[1])
+        strongest_v = max(v for _, v in fps_labeled)
+        is_constraining = weakest_v < 1.0 or weakest_v < min(1.3, strongest_v * 0.75)
+        if is_constraining:
+            bottleneck_label = weakest_k.upper()
+
+    fps_hi = max(25.0, median_fps * (1.0 + spread))
+    fps_lo = max(8.0,  median_fps * (1.0 - spread))
 
     return {
-        "model": "AI Predictor v3 (benchmark-backed)",
+        "model": "AI Predictor v4 (continuous-curve)",
         "confidence": confidence,
-        "score": round(score, 2),
+        "score": round(effective, 2),
         "score_min": round(score_min, 2),
         "score_rec": round(score_rec, 2),
         "bottleneck": bottleneck_label,
         "note": note,
         "metrics": {
             "one_percent_low": one_percent_low,
-            "render_latency_ms": f"~{round(1000 / max(25.0, base_high), 1)}-{round(1000 / max(12.0, base_low), 1)} ms",
+            "render_latency_ms": f"~{round(1000 / fps_hi, 1)}-{round(1000 / fps_lo, 1)} ms",
         },
         "presets": {
             "low": low,

@@ -29,14 +29,26 @@ _MAPPING = {
                 "fields": {"keyword": {"type": "keyword"}},
             },
             "genres":              {"type": "keyword"},
-            "tags":                {"type": "keyword"},
+            "tags":                {
+                "type": "keyword",
+                "fields": {"text": {"type": "text", "analyzer": "standard"}},
+            },
             "short_description":   {"type": "text"},
-            "developer":           {"type": "keyword"},
-            "publisher":           {"type": "keyword"},
+            "developer":           {
+                "type": "keyword",
+                "fields": {"text": {"type": "text", "analyzer": "standard"}},
+            },
+            "publisher":           {
+                "type": "keyword",
+                "fields": {"text": {"type": "text", "analyzer": "standard"}},
+            },
+            "app_type":            {"type": "keyword"},
             "is_free":             {"type": "boolean"},
             "price_usd":           {"type": "float"},
             "header_image":        {"type": "keyword", "index": False},
             "requirements_cached": {"type": "boolean"},
+            "popularity":          {"type": "integer"},
+            "rating":              {"type": "integer"},
             "min_reqs":            {"type": "object", "enabled": False},
             "rec_reqs":            {"type": "object", "enabled": False},
             "compat_cache":        {"type": "object", "enabled": False},
@@ -64,9 +76,8 @@ def _build_es():
         else:
             es = Elasticsearch(host, api_key=api_key)
 
-        # ping() (HEAD /) is blocked on Serverless — use info() instead
-        es.info()
-        log.info("Connected to Elasticsearch at %s", host)
+        # No cluster-level check here — connectivity is verified in _ensure_index
+        log.info("Elasticsearch client created for %s", host)
         return es
     except Exception as e:
         log.warning("Failed to connect to Elasticsearch: %s", e)
@@ -99,9 +110,19 @@ class ESClient:
                     mappings=_MAPPING["mappings"],
                 )
                 log.info("Created Elasticsearch index '%s'", INDEX_NAME)
-        except Exception as e:
-            log.error("Failed to create ES index: %s", e)
-            self._available = False
+            else:
+                self._es.indices.put_mapping(
+                    index=INDEX_NAME,
+                    properties=_MAPPING["mappings"]["properties"],
+                )
+        except Exception:
+            # Read-only API key can't manage index metadata — verify read access instead
+            try:
+                self._es.search(index=INDEX_NAME, query={"match_all": {}}, size=1)
+                log.info("Connected to Elasticsearch (read-only mode).")
+            except Exception as e:
+                log.error("Cannot read from Elasticsearch index: %s", e)
+                self._available = False
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
@@ -126,34 +147,100 @@ class ESClient:
         self,
         query: str,
         genres: list = None,
-        size: int = 20,
+        tags: list = None,
+        size: int = 30,
     ) -> list:
         if not self._available:
             return []
         try:
-            must = []
-            if query and query.strip():
-                must.append({
-                    "multi_match": {
-                        "query": query,
-                        "fields": ["name^3", "short_description", "tags"],
-                        "fuzziness": "AUTO",
-                    }
-                })
-            else:
-                must.append({"match_all": {}})
-
             filters = []
             if genres:
                 filters.append({"terms": {"genres": genres}})
+            if tags:
+                filters.append({"terms": {"tags": tags}})
+
+            q = (query or "").strip()
+
+            if q:
+                if len(q) <= 2:
+                    # Very short queries: prefix only — fuzzy on 1-2 chars returns garbage
+                    base_query = {
+                        "bool": {
+                            "must": [{"match_phrase_prefix": {"name": q}}],
+                            "filter": filters,
+                        }
+                    }
+                else:
+                    base_query = {
+                        "bool": {
+                            "must": [{
+                                "multi_match": {
+                                    "query": q,
+                                    # developer.text / tags.text use standard analyser → case-insensitive
+                                    "fields": [
+                                        "name^5",
+                                        "tags.text^2",
+                                        "developer.text^2",
+                                        "publisher.text^1",
+                                        "short_description^1",
+                                    ],
+                                    "type": "best_fields",
+                                    "fuzziness": "AUTO",
+                                    "operator": "or",
+                                    "tie_breaker": 0.3,
+                                }
+                            }],
+                            "should": [
+                                # "counter" → "Counter-Strike" prefix boost
+                                {"match_phrase_prefix": {"name": {"query": q, "boost": 5}}},
+                                # Typing the exact name → largest boost
+                                {"term": {"name.keyword": {"value": q, "boost": 10}}},
+                                # Tag phrase match (case-insensitive via .text sub-field)
+                                {"match": {"tags.text": {"query": q, "boost": 3}}},
+                                # Developer match — "valve" finds all Valve games
+                                {"match": {"developer.text": {"query": q, "boost": 2}}},
+                                # Soft boost: games with cached requirements → CHECK is instant
+                                {"term": {"requirements_cached": True}},
+                            ],
+                            "filter": filters,
+                        }
+                    }
+            else:
+                base_query = {"bool": {"must": [{"match_all": {}}], "filter": filters}}
 
             resp = self._es.search(
                 index=INDEX_NAME,
-                query={"bool": {"must": must, "filter": filters}},
+                query={
+                    "function_score": {
+                        "query": base_query,
+                        "functions": [
+                            # log(1 + owners) — CS2 outranks an obscure game with the same prefix
+                            {
+                                "field_value_factor": {
+                                    "field": "popularity",
+                                    "modifier": "log1p",
+                                    "factor": 0.2,
+                                    "missing": 1,
+                                }
+                            },
+                            # Positive review % (0-100) → scaled to 0-1
+                            {
+                                "field_value_factor": {
+                                    "field": "rating",
+                                    "modifier": "none",
+                                    "factor": 0.01,
+                                    "missing": 50,
+                                }
+                            },
+                        ],
+                        "score_mode": "sum",
+                        "boost_mode": "sum",
+                    }
+                },
                 size=size,
                 source=[
                     "app_id", "name", "genres", "tags", "short_description",
-                    "header_image", "developer", "is_free",
+                    "header_image", "developer", "is_free", "app_type",
                     "requirements_cached", "compat_cache",
                 ],
             )
@@ -178,8 +265,155 @@ class ESClient:
             log.error("ES get_uncached error: %s", e)
             return []
 
+    def browse(
+        self,
+        genres: list = None,
+        tags: list = None,
+        sort: str = "popularity",
+        min_rating: int = 0,
+        size: int = 30,
+    ) -> list:
+        """
+        Catalogue browsing with rich ES filtering and deterministic sorting.
+
+        Genre filter uses three tiers of fallback so results appear even when the
+        genres field is not yet populated from SteamSpy:
+          1. Exact keyword on genres field (fast, precise)
+          2. Genre name matched as text in the tags field (same SteamSpy source)
+          3. Genre name matched in the game name (last resort)
+        Docs missing the popularity/rating fields sort last automatically.
+        """
+        if not self._available:
+            return []
+        try:
+            must_not = [
+                {"terms": {"app_type": [
+                    "dlc", "demo", "mod", "music", "soundtrack", "video", "advertising",
+                ]}},
+            ]
+            filters = []
+            should = []
+
+            if genres:
+                should.append({"terms": {"genres": genres}})
+                for g in genres:
+                    should.append({"match": {"tags.text":  {"query": g, "boost": 0.5}}})
+                    should.append({"match": {"name":       {"query": g, "boost": 0.2}}})
+
+            if tags:
+                should.append({"terms": {"tags": tags}})
+
+            if min_rating > 0:
+                filters.append({"range": {"rating": {"gte": min_rating}}})
+
+            if should:
+                base_q = {
+                    "bool": {
+                        "should": should,
+                        "minimum_should_match": 1,
+                        "filter":   filters,
+                        "must_not": must_not,
+                    }
+                }
+            elif filters:
+                base_q = {"bool": {"filter": filters, "must_not": must_not}}
+            else:
+                base_q = {"bool": {"must_not": must_not}}
+
+            # unmapped_type prevents a 400 if popularity/rating aren't in the
+            # live mapping yet (e.g. put_mapping was blocked by a read-only key).
+            _last = {"order": "desc", "missing": "_last", "unmapped_type": "integer"}
+            sort_fields = {
+                "popularity": [{"popularity": _last}, {"rating": _last}],
+                "rating":     [{"rating": _last},     {"popularity": _last}],
+                "name":       [{"name.keyword": "asc"}],
+            }.get(sort, [{"popularity": _last}])
+
+            resp = self._es.search(
+                index=INDEX_NAME,
+                query=base_q,
+                sort=sort_fields,
+                size=size,
+                source=[
+                    "app_id", "name", "genres", "tags", "header_image",
+                    "developer", "app_type", "is_free", "popularity", "rating",
+                    "requirements_cached", "compat_cache",
+                ],
+            )
+            return [h["_source"] for h in resp["hits"]["hits"]]
+        except Exception as e:
+            log.error("ES browse error: %s", e)
+            return []
+
+    def get_similar(
+        self,
+        app_ids: list,
+        genres: list = None,
+        exclude_ids: list = None,
+        size: int = 30,
+    ) -> list:
+        """
+        More Like This recommendation: find games similar to the given app_ids.
+        Matches on tags, genres, and developer text fields.
+        Optionally boosts results matching known genre preferences.
+        """
+        if not self._available or not app_ids:
+            return []
+        try:
+            mlt = {
+                "more_like_this": {
+                    "fields": ["tags.text", "genres", "developer.text"],
+                    "like": [
+                        {"_index": INDEX_NAME, "_id": str(aid)}
+                        for aid in app_ids[-15:]
+                    ],
+                    "min_term_freq":  1,
+                    "max_query_terms": 25,
+                    "min_doc_freq":   2,
+                    "boost_terms":    1.0,
+                }
+            }
+
+            must_not = [
+                {"terms": {"app_type": [
+                    "dlc", "demo", "mod", "music", "soundtrack", "video",
+                ]}},
+            ]
+            if exclude_ids:
+                must_not.append({"ids": {"values": [str(a) for a in exclude_ids]}})
+
+            filters = []
+            if genres:
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"terms": {"genres": genres}},
+                            *[
+                                {"match": {"tags.text": {"query": g, "boost": 0.5}}}
+                                for g in genres[:5]
+                            ],
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                })
+
+            resp = self._es.search(
+                index=INDEX_NAME,
+                query={"bool": {"must": [mlt], "filter": filters, "must_not": must_not}},
+                size=size,
+                source=[
+                    "app_id", "name", "genres", "tags", "header_image",
+                    "developer", "app_type", "is_free", "popularity", "rating",
+                    "requirements_cached", "compat_cache",
+                ],
+            )
+            return [h["_source"] for h in resp["hits"]["hits"]]
+        except Exception as e:
+            log.error("ES get_similar error: %s", e)
+            return []
+
     def all_genres(self) -> list:
-        """Return all genre values present in the index, sorted."""
+        """Return all genre values present in the index, sorted alphabetically."""
         if not self._available:
             return []
         try:
@@ -192,6 +426,22 @@ class ESClient:
             return sorted(b["key"] for b in buckets if b["key"])
         except Exception as e:
             log.error("ES all_genres error: %s", e)
+            return []
+
+    def all_tags(self) -> list:
+        """Return the top 50 most common tags, ordered by popularity."""
+        if not self._available:
+            return []
+        try:
+            resp = self._es.search(
+                index=INDEX_NAME,
+                size=0,
+                aggs={"tags": {"terms": {"field": "tags", "size": 50}}},
+            )
+            buckets = resp["aggregations"]["tags"]["buckets"]
+            return [b["key"] for b in buckets if b["key"]]
+        except Exception as e:
+            log.error("ES all_tags error: %s", e)
             return []
 
     # ── Write ──────────────────────────────────────────────────────────────────
@@ -249,17 +499,32 @@ class ESClient:
             return 0
 
     def bulk_update_genres(self, docs: list) -> int:
-        """Partial-update only genre/tag/developer fields on existing docs."""
+        """
+        Upsert genre/tag/developer/popularity/rating fields.
+
+        On existing docs: updates only the supplied fields (requirements_cached
+        is intentionally excluded so enrichment progress is never reset).
+        On new docs: creates the full document including requirements_cached=False
+        so the enrichment loop picks it up.
+        """
         if not self._available or not docs:
             return 0
         try:
             from elasticsearch import helpers
+            _metadata_fields = {
+                "name", "header_image", "genres", "tags",
+                "developer", "publisher", "popularity", "rating",
+            }
             actions = [
                 {
                     "_op_type": "update",
-                    "_index": INDEX_NAME,
-                    "_id": str(d["app_id"]),
-                    "doc": {k: v for k, v in d.items() if k != "app_id"},
+                    "_index":   INDEX_NAME,
+                    "_id":      str(d["app_id"]),
+                    # Update only metadata fields on existing docs
+                    "doc": {k: v for k, v in d.items()
+                            if k != "app_id" and k in _metadata_fields},
+                    # On create: include requirements_cached so doc enters enrich queue
+                    "upsert": {k: v for k, v in d.items() if k != "app_id"},
                 }
                 for d in docs
                 if d.get("app_id") is not None
