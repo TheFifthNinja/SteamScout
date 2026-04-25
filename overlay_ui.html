@@ -25,6 +25,7 @@
 
 html, body {
   width: 100%; height: 100%;
+  min-width: 460px; min-height: 180px;
   background: transparent;
   color: var(--text);
   font-family: var(--font-family);
@@ -235,6 +236,14 @@ html, body {
   font-size: calc(10px * var(--font-scale)); color: var(--dim);
   padding-top: 2px; padding-left: 2px;
 }
+.upgrade-store-links { display: flex; gap: 5px; flex-wrap: wrap; margin: 5px 0 2px; }
+.store-link-btn {
+  font-size: calc(9.5px * var(--font-scale)); padding: 2px 8px;
+  background: var(--surface2); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 3px;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.store-link-btn:hover { color: var(--steam); border-color: var(--steam); }
 
 /* ── Summary ──────────────────────────────────────────────────────────── */
 .summary-text {
@@ -773,6 +782,17 @@ html, body {
 .settings-card:nth-child(2) { animation-delay: 0.04s; }
 .settings-card:nth-child(3) { animation-delay: 0.08s; }
 .settings-card:nth-child(4) { animation-delay: 0.12s; }
+
+/* Load More button */
+#cat-load-more-row { grid-column: 1 / -1; text-align: center; padding: 10px 0 14px; }
+.cat-load-more-btn {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 7px 22px;
+  font-size: calc(11px * var(--font-scale)); cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.cat-load-more-btn:hover:not(:disabled) { background: var(--steam); border-color: var(--steam); color: var(--bright); }
+.cat-load-more-btn:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
@@ -1149,78 +1169,82 @@ function buildUpgrades(compat, tabName) {
     const need = required || "See game requirement";
     const query = upgradeQueryKey(key, required);
     const deal = _dealCache[query] || {};
-    const url = deal.url || ebayUrl(query);
+    const storeLinks = deal.store_links || {};
 
     html += `<div class="upgrade-reason">${esc(part)}: ${esc(reason)} (target: ${esc(need)})</div>`;
 
+    // Primary button: best listing found, or eBay search fallback
     let btnText;
     if (deal.loading) btnText = `Finding cheapest ${part}...`;
-    else if (deal.price) btnText = `Find Cheapest Online (${esc(deal.price)})`;
+    else if (deal.price && deal.store) btnText = `${esc(deal.price)} on ${esc(deal.store)} →`;
     else btnText = "Find Cheapest Online";
-
-    html += `<button class="upgrade-btn" data-url="${esc(url)}">${btnText}</button>`;
+    const primaryUrl = deal.url || storeLinks["eBay"] || `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(query)}&_sop=15&LH_BIN=1`;
+    html += `<button class="upgrade-btn" data-url="${esc(primaryUrl)}">${btnText}</button>`;
 
     if (deal.title && !deal.loading) {
       let title = deal.title;
-      if (title.length > 54) title = title.substring(0, 53) + "...";
-      html += `<div class="upgrade-deal-info">${esc(deal.store||"Store")}: ${esc(title)}</div>`;
+      if (title.length > 54) title = title.substring(0, 53) + "…";
+      html += `<div class="upgrade-deal-info">${esc(title)}</div>`;
     }
+
+    // Store links row
+    const STORES = ["PCPartPicker", "Newegg", "Amazon", "eBay"];
+    const storeHtml = STORES
+      .filter(s => storeLinks[s])
+      .map(s => `<button class="store-link-btn" data-url="${esc(storeLinks[s])}">${esc(s)}</button>`)
+      .join("");
+    if (storeHtml) html += `<div class="upgrade-store-links">${storeHtml}</div>`;
   }
   html += '</div>';
   return html;
 }
 
 function wireUpgradeButtons() {
-  document.querySelectorAll(".upgrade-btn").forEach(btn => {
+  document.querySelectorAll(".upgrade-btn, .store-link-btn").forEach(btn => {
     btn.onclick = () => {
       if (window.pywebview) window.pywebview.api.open_url(btn.dataset.url);
     };
   });
 }
 
-/* Simple upgrade query key — mirrors Python logic enough to match deal cache keys */
+/* Mirror of Python _retail_query() — must produce identical cache keys */
 function upgradeQueryKey(key, required) {
-  required = (required||"").replace(/\s+/g," ").trim();
-  // Simplified — just use the same pattern Python uses for cache key matching
-  const mode = (_settings.upgrade_query_mode || "specific");
-  if (key === "ram") {
-    if (mode === "general") return "gaming PC RAM upgrade";
-    const m = required.match(/(\d+(?:\.\d+)?)\s*(tb|gb|mb)/i);
-    if (m) {
-      let gb = parseFloat(m[1]);
-      if (m[2].toLowerCase()==="tb") gb = Math.round(gb*1024);
-      else if (m[2].toLowerCase()==="mb") gb = Math.max(1,Math.round(gb/1024));
-      else gb = Math.round(gb);
-      return `buy ${gb}GB desktop RAM DDR4 or DDR5`;
-    }
-    return `buy ${required} desktop RAM` || "desktop gaming RAM upgrade kit";
-  }
-  if (key === "storage") {
-    if (mode === "general") return "gaming PC SSD storage upgrade";
-    const m = required.match(/(\d+(?:\.\d+)?)\s*(tb|gb|mb)/i);
-    const kind = /ssd|nvme/i.test(required) ? "SSD" : "drive";
-    if (m) {
-      let gb = parseFloat(m[1]);
-      if (m[2].toLowerCase()==="tb") gb = Math.round(gb*1024);
-      else if (m[2].toLowerCase()==="mb") gb = Math.max(1,Math.round(gb/1024));
-      else gb = Math.round(gb);
-      return `buy ${gb}GB ${kind} for PC`;
-    }
-    return `buy ${required} PC storage` || "gaming PC SSD storage upgrade";
+  const s = (required || "").trim();
+  if (key === "gpu") {
+    const m = s.match(/\b(RTX\s*\d{3,4}(?:\s*(?:Ti\s*Super|Ti|Super))?|GTX\s*\d{3,4}(?:\s*(?:Ti|Super))?|RX\s*\d{3,4}(?:\s*(?:XTX|XT|GRE))?|Arc\s+[A-Z]\d+\w*|Vega\s+\d+)\b/i);
+    const name = m ? m[0].trim()
+      : s.replace(/\b(NVIDIA|AMD|Intel|GeForce|Radeon|or better|equivalent|dedicated|discrete)\b/gi, "").trim().slice(0, 30);
+    return `${name} graphics card`.trim();
   }
   if (key === "cpu") {
-    if (mode === "general") return "gaming PC CPU upgrade";
-    return required ? `buy PC CPU similar or better than ${required}` : "gaming PC CPU upgrade";
+    const m = s.match(/\b(Core\s+Ultra\s+\d+|i[3579]-\d{4,5}[A-Z]*|Ryzen\s+\d+\s+(?:Pro\s+)?\d{4}[A-Z]*|Athlon\s+\w+)\b/i);
+    const name = m ? m[0].trim()
+      : s.replace(/\b(Intel|AMD|Core|Processor|GHz|MHz|or better)\b/gi, "").trim().slice(0, 30);
+    return `${name} processor`.trim();
   }
-  if (key === "gpu") {
-    if (mode === "general") return "gaming PC graphics card upgrade";
-    return required ? `buy graphics card similar or better than ${required}` : "gaming PC dedicated graphics card upgrade";
+  if (key === "ram") {
+    const m = s.match(/(\d+)\s*GB/i);
+    let gb = m ? parseInt(m[1]) : 16;
+    for (const std of [4, 8, 16, 32, 64]) { if (gb <= std) { gb = std; break; } }
+    const ddr = /ddr5/i.test(s) ? "DDR5" : "DDR4";
+    return `${gb}GB ${ddr} RAM`;
   }
-  return `buy PC part upgrade ${required}`;
-}
-
-function ebayUrl(query) {
-  return `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(query)}&_sop=15&LH_BIN=1`;
+  if (key === "storage") {
+    const m = s.match(/(\d+(?:\.\d+)?)\s*(TB|GB|MB)/i);
+    let sizeStr = "1TB";
+    if (m) {
+      let gb = parseFloat(m[1]);
+      const unit = m[2].toUpperCase();
+      if (unit === "TB") gb = Math.round(gb * 1024);
+      else if (unit === "MB") gb = Math.max(1, Math.round(gb / 1024));
+      for (const std of [120, 250, 500, 1000, 2000]) {
+        if (gb <= std) { sizeStr = std < 1000 ? `${std}GB` : `${std / 1000}TB`; break; }
+      }
+    }
+    const kind = /nvme/i.test(s) ? "NVMe SSD" : "SSD";
+    return `${sizeStr} ${kind}`;
+  }
+  return s.slice(0, 50);
 }
 
 function esc(s) {
@@ -1327,6 +1351,7 @@ async function doSearch() {
   if (!window.pywebview) return;
   const query = $searchInput.value.trim();
 
+  _searchResults = [];
   $searchStatusLine.textContent = "Searching...";
   $searchStatusLine.style.color = "var(--steam)";
   $searchBody.innerHTML = "";
@@ -1335,13 +1360,89 @@ async function doSearch() {
     const status = await window.pywebview.api.get_search_status();
     if (!status.es_available) { renderESUnavailable(); return; }
 
-    const results = await window.pywebview.api.search_games(query, _selectedGenres);
+    const results = await window.pywebview.api.search_games(query, _selectedGenres, [], 0);
     _searchResults = results || [];
     renderSearchResults(_searchResults);
   } catch(e) {
     $searchStatusLine.textContent = "Search error — is Elasticsearch running?";
     $searchStatusLine.style.color = "var(--yellow)";
   }
+}
+
+async function _loadMoreSearch() {
+  if (!window.pywebview) return;
+  const query = $searchInput.value.trim();
+  const offset = _searchResults.length;
+  const btn = document.getElementById("search-load-more-btn");
+  if (btn) { btn.textContent = "Loading..."; btn.disabled = true; }
+  try {
+    const newResults = await window.pywebview.api.search_games(query, _selectedGenres, [], offset);
+    if (!newResults || !newResults.length) {
+      const row = document.getElementById("search-load-more-row");
+      if (row) row.remove();
+      return;
+    }
+    _searchResults = _searchResults.concat(newResults);
+    const row = document.getElementById("search-load-more-row");
+    if (row) row.remove();
+    _appendSearchResults(newResults, offset);
+    if (newResults.length >= 30) _addSearchLoadMore();
+  } catch(e) {
+    if (btn) { btn.textContent = "Load More"; btn.disabled = false; }
+  }
+}
+
+function _addSearchLoadMore() {
+  if (document.getElementById("search-load-more-row")) return;
+  const row = document.createElement("div");
+  row.id = "search-load-more-row";
+  row.style.cssText = "text-align:center;padding:10px 0 16px;";
+  const btn = document.createElement("button");
+  btn.id = "search-load-more-btn";
+  btn.className = "cat-load-more-btn";
+  btn.textContent = "Load More";
+  btn.onclick = _loadMoreSearch;
+  row.appendChild(btn);
+  $searchBody.appendChild(row);
+}
+
+function _wireSearchCards(root) {
+  root.querySelectorAll(".check-game-btn:not([data-wired])").forEach(btn => {
+    btn.dataset.wired = "1";
+    btn.onclick = async e => { e.stopPropagation(); await runSearchCheck(parseInt(btn.dataset.appid), btn); };
+  });
+  root.querySelectorAll(".game-card:not([data-wired])").forEach(card => {
+    card.dataset.wired = "1";
+    card.onclick = async () => {
+      const btn = card.querySelector(".check-game-btn");
+      if (btn) await runSearchCheck(parseInt(btn.dataset.appid), btn);
+    };
+  });
+}
+
+function _buildSearchCard(g, i) {
+  const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
+  const min = myStatus.overall_min;
+  let badge = "";
+  if (min === "pass")       badge = `<span class="run-badge pass">✓ CAN RUN</span>`;
+  else if (min === "fail")  badge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
+  else                      badge = `<span class="run-badge unknown">? UNCHECKED</span>`;
+  const genres = (g.genres || []).slice(0, 3).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
+  const imgSrc = g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.app_id}/header.jpg`;
+  const thumb  = `<img class="game-thumb" src="${esc(imgSrc)}" loading="lazy" onerror="catImgFallback(this)">`;
+  return `<div class="game-card" data-appid="${g.app_id}" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
+    ${thumb}
+    <div class="game-card-info">
+      <div class="game-card-name">${esc(g.name || "Unknown Game")}</div>
+      <div class="game-card-meta">${genres} ${badge}</div>
+    </div>
+    <button class="check-game-btn" data-appid="${g.app_id}">CHECK</button>
+  </div>`;
+}
+
+function _appendSearchResults(results, startIdx) {
+  $searchBody.insertAdjacentHTML("beforeend", results.map((g, i) => _buildSearchCard(g, startIdx + i)).join(""));
+  _wireSearchCards($searchBody);
 }
 
 /* ── Results rendering ─────────────────────────────────────────────── */
@@ -1366,42 +1467,9 @@ function renderSearchResults(results) {
   const enriched = genreStatus.enriched || 0;
   $searchStatusLine.textContent = `${n} result${n !== 1 ? "s" : ""}${enriched ? "  ·  " + enriched.toLocaleString() + " games pre-checked" : ""}`;
 
-  $searchBody.innerHTML = results.map((g, i) => {
-    // Only show compat status the CURRENT USER personally checked — never pre-cached cloud data.
-    const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
-    const min = myStatus.overall_min;
-    let badge = "";
-    if (min === "pass")  badge = `<span class="run-badge pass">✓ CAN RUN</span>`;
-    else if (min === "fail") badge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
-    else badge = `<span class="run-badge unknown">? UNCHECKED</span>`;
-
-    const genres = (g.genres || []).slice(0, 3).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
-
-    const imgSrc = g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.app_id}/header.jpg`;
-    const thumb = `<img class="game-thumb" src="${esc(imgSrc)}" loading="lazy" onerror="catImgFallback(this)">`;
-
-    return `<div class="game-card" data-appid="${g.app_id}" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
-      ${thumb}
-      <div class="game-card-info">
-        <div class="game-card-name">${esc(g.name || "Unknown Game")}</div>
-        <div class="game-card-meta">${genres} ${badge}</div>
-      </div>
-      <button class="check-game-btn" data-appid="${g.app_id}">CHECK</button>
-    </div>`;
-  }).join("");
-
-  $searchBody.querySelectorAll(".check-game-btn").forEach(btn => {
-    btn.onclick = async e => {
-      e.stopPropagation();
-      await runSearchCheck(parseInt(btn.dataset.appid), btn);
-    };
-  });
-  $searchBody.querySelectorAll(".game-card").forEach(card => {
-    card.onclick = async () => {
-      const btn = card.querySelector(".check-game-btn");
-      if (btn) await runSearchCheck(parseInt(btn.dataset.appid), btn);
-    };
-  });
+  $searchBody.innerHTML = results.map((g, i) => _buildSearchCard(g, i)).join("");
+  _wireSearchCards($searchBody);
+  if (results.length >= 30) _addSearchLoadMore();
 }
 
 async function runSearchCheck(appId, btn) {
@@ -1423,9 +1491,15 @@ async function runSearchCheck(appId, btn) {
 
     const result = await window.pywebview.api.check_game(appId);
     if (result) {
-      if (result.compat) _userGameStatus[appId] = result.compat;
-      delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
-      window.SS.showResult(result);
+      if (result.unlisted) {
+        $status.textContent = `⚠  This game's store page is not publicly available on Steam.`;
+        $status.style.color = "var(--yellow)";
+        $status.classList.remove("waiting");
+      } else {
+        if (result.compat) _userGameStatus[appId] = result.compat;
+        delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
+        window.SS.showResult(result);
+      }
     } else {
       $status.textContent = `⚠  No system requirements found for this game.`;
       $status.style.color = "var(--yellow)";
@@ -1584,9 +1658,10 @@ function switchCatSection(sectionId) {
 async function loadCatSection(section) {
   if (!window.pywebview) return;
   _catSection = section;
+  _setCatLoadMore(false);
   $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">Loading...</div>`;
   try {
-    const games = await window.pywebview.api.get_catalogue(section, _catCountry, _catSort, _catMinRating);
+    const games = await window.pywebview.api.get_catalogue(section, _catCountry, _catSort, _catMinRating, _catPriceFilter, 0);
     _catData[section] = games || [];
     if (!games || !games.length) {
       $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games found for this filter.</div>`;
@@ -1602,14 +1677,19 @@ const _DLC_NAME_KEYWORDS = ["soundtrack", "ost", "season pass", "dlc", "expansio
 
 function applyPriceFilter(games) {
   if (_catPriceFilter === "all") return games;
-  if (_catPriceFilter === "free") return games.filter(g => g.is_free || g.final_price === 0);
+  if (_catPriceFilter === "free") {
+    return games.filter(g =>
+      g.is_free === true ||
+      g.final_price === 0
+    );
+  }
   const cc = getCurrentCountry();
   const tierIdx = parseInt(_catPriceFilter);
   const maxDisplay = cc.tiers[tierIdx];
   return games.filter(g => {
+    if (g.is_free === true || g.final_price === 0) return false; // free games belong in Free tier only
     // Games with no price data (genre/recommended sections) always pass through.
     if (g.final_price === undefined || g.final_price === null) return true;
-    if (g.is_free || g.final_price === 0) return true;
     const displayPrice = cc.dec === 0 ? g.final_price : g.final_price / 100;
     return displayPrice <= maxDisplay;
   });
@@ -1633,14 +1713,16 @@ function applyPriceFilter(games) {
 })();
 updatePriceTierLabels();
 
+const _STEAM_SECTIONS = ["sale", "trending", "new_releases"];
+
 // Country change: clear Steam-section cache and reload
 $catCountrySelect.onchange = () => {
   _catCountry = $catCountrySelect.value;
   localStorage.setItem("steamscout_country", _catCountry);
   updatePriceTierLabels();
   // Invalidate cached data for Steam-sourced sections (prices are country-specific)
-  ["sale", "trending", "new_releases"].forEach(s => delete _catData[s]);
-  if (["sale", "trending", "new_releases"].includes(_catSection)) {
+  _STEAM_SECTIONS.forEach(s => delete _catData[s]);
+  if (_STEAM_SECTIONS.includes(_catSection)) {
     loadCatSection(_catSection);
   }
 };
@@ -1661,12 +1743,12 @@ async function detectAndApplyCountry() {
       $catCountrySelect.value = code;
       updatePriceTierLabels();
       // Re-render prices if Steam sections are already loaded
-      ["sale", "trending", "new_releases"].forEach(s => {
+      _STEAM_SECTIONS.forEach(s => {
         if (_catData[s]) {
           delete _catData[s];  // Prices were fetched without cc — reload with detected cc
         }
       });
-      if (["sale", "trending", "new_releases"].includes(_catSection)) {
+      if (_STEAM_SECTIONS.includes(_catSection)) {
         loadCatSection(_catSection);
       }
     }
@@ -1679,8 +1761,16 @@ $catPriceRow.querySelectorAll(".cat-price-chip").forEach(btn => {
     _catPriceFilter = btn.dataset.price;
     $catPriceRow.querySelectorAll(".cat-price-chip").forEach(b =>
       b.classList.toggle("active", b.dataset.price === _catPriceFilter));
-    const data = _catData[_catSection];
-    if (data) renderCatCards(data);
+    if (_STEAM_SECTIONS.includes(_catSection)) {
+      // Steam sections carry full price data — filter client-side without re-fetching.
+      const data = _catData[_catSection];
+      if (data) renderCatCards(data);
+    } else {
+      // ES sections (genres, recommended) have no price data client-side.
+      // Clear cache so the next fetch sends the price filter to the server.
+      delete _catData[_catSection];
+      loadCatSection(_catSection);
+    }
   };
 });
 
@@ -1692,7 +1782,7 @@ $catSortRow.querySelectorAll(".cat-sort-btn").forEach(btn => {
     $catSortRow.querySelectorAll(".cat-sort-btn").forEach(b =>
       b.classList.toggle("active", b.dataset.sort === _catSort));
     // Steam-sourced sections: sort client-side without re-fetching
-    if (["sale", "trending", "new_releases"].includes(_catSection)) {
+    if (_STEAM_SECTIONS.includes(_catSection)) {
       const data = _catData[_catSection];
       if (data) {
         const sorted = [...data];
@@ -1751,61 +1841,104 @@ function isDLC(g) {
   return _DLC_NAME_KEYWORDS.some(k => name.includes(k));
 }
 
+function _buildCatCard(g, i) {
+  const hasDiscount = (g.discount_percent || 0) > 0;
+  const imgUrl  = g.header_image || catImgUrl(g.app_id);
+  const thumb   = `<img class="cat-thumb" src="${esc(imgUrl)}" onerror="catImgFallback(this)">`;
+  const discBadge = hasDiscount ? `<div class="cat-discount-badge">-${g.discount_percent}%</div>` : "";
+  const typeLabel = isDLC(g) ? "DLC" : "GAME";
+  const typeColor = isDLC(g) ? "rgba(0,0,0,0.75)" : "rgba(30,90,160,0.85)";
+  const dlcBadge  = `<div class="cat-dlc-badge" style="background:${typeColor}">${typeLabel}</div>`;
+  let priceHtml = "";
+  if (g.is_free) {
+    priceHtml = `<span class="cat-price free">FREE</span>`;
+  } else if (hasDiscount && g.original_price && g.final_price) {
+    priceHtml = `<span class="cat-original-price">${fmtCatPrice(g.original_price)}</span>`
+              + `<span class="cat-price discounted">${fmtCatPrice(g.final_price)}</span>`;
+  } else if (g.final_price) {
+    priceHtml = `<span class="cat-price full">${fmtCatPrice(g.final_price)}</span>`;
+  }
+  const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
+  const min = myStatus.overall_min;
+  const runBadge = min === "pass" ? `<span class="run-badge pass" style="font-size:8px;padding:1px 4px">✓</span>`
+                 : min === "fail" ? `<span class="run-badge fail" style="font-size:8px;padding:1px 4px">✗</span>` : "";
+  const gameName = esc(g.name || "Unknown");
+  return `<div class="cat-card" data-appid="${g.app_id}" title="${gameName}" style="animation-delay:${Math.min(i*0.02,0.4)}s">
+    <div class="cat-thumb-wrap">${thumb}${discBadge}${dlcBadge}</div>
+    <div class="cat-card-body">
+      <div class="cat-card-name">${gameName}</div>
+      <div class="cat-card-footer">
+        <span class="cat-price-wrap">${priceHtml}</span>
+        ${runBadge}
+        <button class="check-game-btn cat-check" data-appid="${g.app_id}">CHECK</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function _wireCatCards(root) {
+  root.querySelectorAll(".cat-check:not([data-wired])").forEach(btn => {
+    btn.dataset.wired = "1";
+    btn.onclick = async e => { e.stopPropagation(); await runCatCheck(parseInt(btn.dataset.appid), btn); };
+  });
+  root.querySelectorAll(".cat-card:not([data-wired])").forEach(card => {
+    card.dataset.wired = "1";
+    card.onclick = async e => {
+      if (e.target.closest(".cat-check")) return;
+      await runCatCheck(parseInt(card.dataset.appid), card.querySelector(".cat-check"));
+    };
+  });
+}
+
+function _setCatLoadMore(visible) {
+  let row = document.getElementById("cat-load-more-row");
+  if (!visible) { if (row) row.remove(); return; }
+  if (row) return;
+  row = document.createElement("div");
+  row.id = "cat-load-more-row";
+  const btn = document.createElement("button");
+  btn.className = "cat-load-more-btn";
+  btn.textContent = "Load More";
+  btn.onclick = _loadMoreCatGames;
+  row.appendChild(btn);
+  $catGrid.appendChild(row);
+}
+
+async function _loadMoreCatGames() {
+  if (_catBusy || !window.pywebview) return;
+  const section = _catSection;
+  const offset = (_catData[section] || []).length;
+  const btn = document.getElementById("cat-load-more-row")?.querySelector("button");
+  if (btn) { btn.textContent = "Loading..."; btn.disabled = true; }
+  _catBusy = true;
+  try {
+    const newGames = await window.pywebview.api.get_catalogue(
+      section, _catCountry, _catSort, _catMinRating, _catPriceFilter, offset);
+    if (!newGames || !newGames.length) { _setCatLoadMore(false); return; }
+    _catData[section] = (_catData[section] || []).concat(newGames);
+    _setCatLoadMore(false);
+    const filtered = applyPriceFilter(newGames);
+    if (filtered.length) {
+      $catGrid.insertAdjacentHTML("beforeend", filtered.map((g, i) => _buildCatCard(g, offset + i)).join(""));
+      _wireCatCards($catGrid);
+    }
+    _setCatLoadMore(newGames.length >= 30);
+  } catch(e) {
+    if (btn) { btn.textContent = "Load More"; btn.disabled = false; }
+  } finally {
+    _catBusy = false;
+  }
+}
+
 function renderCatCards(games) {
   const filtered = applyPriceFilter(games);
   if (!filtered.length) {
     $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games match this filter.</div>`;
     return;
   }
-  $catGrid.innerHTML = filtered.map((g, i) => {
-    const hasDiscount = (g.discount_percent || 0) > 0;
-    // Prefer the image URL returned directly from Steam's API; fall back to CDN pattern.
-    const imgUrl  = g.header_image || catImgUrl(g.app_id);
-    const thumb   = `<img class="cat-thumb" src="${esc(imgUrl)}" onerror="catImgFallback(this)">`;
-    const discBadge = hasDiscount ? `<div class="cat-discount-badge">-${g.discount_percent}%</div>` : "";
-    const typeLabel = isDLC(g) ? "DLC" : "GAME";
-    const typeColor = isDLC(g) ? "rgba(0,0,0,0.75)" : "rgba(30,90,160,0.85)";
-    const dlcBadge  = `<div class="cat-dlc-badge" style="background:${typeColor}">${typeLabel}</div>`;
-
-    let priceHtml = "";
-    if (g.is_free) {
-      priceHtml = `<span class="cat-price free">FREE</span>`;
-    } else if (hasDiscount && g.original_price && g.final_price) {
-      priceHtml = `<span class="cat-original-price">${fmtCatPrice(g.original_price)}</span>`
-                + `<span class="cat-price discounted">${fmtCatPrice(g.final_price)}</span>`;
-    } else if (g.final_price) {
-      priceHtml = `<span class="cat-price full">${fmtCatPrice(g.final_price)}</span>`;
-    }
-
-    // Only show compat the current user has verified on their own PC.
-    const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
-    const min = myStatus.overall_min;
-    const runBadge = min === "pass" ? `<span class="run-badge pass" style="font-size:8px;padding:1px 4px">✓</span>`
-                   : min === "fail" ? `<span class="run-badge fail" style="font-size:8px;padding:1px 4px">✗</span>` : "";
-
-    const gameName = esc(g.name || "Unknown");
-    return `<div class="cat-card" data-appid="${g.app_id}" title="${gameName}" style="animation-delay:${Math.min(i*0.02,0.4)}s">
-      <div class="cat-thumb-wrap">${thumb}${discBadge}${dlcBadge}</div>
-      <div class="cat-card-body">
-        <div class="cat-card-name">${gameName}</div>
-        <div class="cat-card-footer">
-          <span class="cat-price-wrap">${priceHtml}</span>
-          ${runBadge}
-          <button class="check-game-btn cat-check" data-appid="${g.app_id}">CHECK</button>
-        </div>
-      </div>
-    </div>`;
-  }).join("");
-
-  $catGrid.querySelectorAll(".cat-check").forEach(btn => {
-    btn.onclick = async e => { e.stopPropagation(); await runCatCheck(parseInt(btn.dataset.appid), btn); };
-  });
-  $catGrid.querySelectorAll(".cat-card").forEach(card => {
-    card.onclick = async e => {
-      if (e.target.closest(".cat-check")) return;
-      await runCatCheck(parseInt(card.dataset.appid), card.querySelector(".cat-check"));
-    };
-  });
+  $catGrid.innerHTML = filtered.map((g, i) => _buildCatCard(g, i)).join("");
+  _wireCatCards($catGrid);
+  _setCatLoadMore(!_STEAM_SECTIONS.includes(_catSection) && games.length >= 30);
 }
 
 async function runCatCheck(appId, btn) {
@@ -1823,9 +1956,15 @@ async function runCatCheck(appId, btn) {
     $content.innerHTML = "";
     const result = await window.pywebview.api.check_game(appId);
     if (result) {
-      if (result.compat) _userGameStatus[appId] = result.compat;
-      delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
-      window.SS.showResult(result);
+      if (result.unlisted) {
+        $status.textContent = `⚠  This game's store page is not publicly available on Steam.`;
+        $status.style.color = "var(--yellow)";
+        $status.classList.remove("waiting");
+      } else {
+        if (result.compat) _userGameStatus[appId] = result.compat;
+        delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
+        window.SS.showResult(result);
+      }
     } else {
       $status.textContent = `⚠  No system requirements found.`;
       $status.style.color = "var(--yellow)";

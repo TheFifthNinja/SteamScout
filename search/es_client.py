@@ -149,6 +149,7 @@ class ESClient:
         genres: list = None,
         tags: list = None,
         size: int = 30,
+        offset: int = 0,
     ) -> list:
         if not self._available:
             return []
@@ -178,27 +179,31 @@ class ESClient:
                                     "query": q,
                                     # developer.text / tags.text use standard analyser → case-insensitive
                                     "fields": [
-                                        "name^5",
+                                        "name^6",
                                         "tags.text^2",
-                                        "developer.text^2",
+                                        "developer.text^3",
                                         "publisher.text^1",
                                         "short_description^1",
                                     ],
                                     "type": "best_fields",
                                     "fuzziness": "AUTO",
+                                    "prefix_length": 2,
                                     "operator": "or",
                                     "tie_breaker": 0.3,
                                 }
                             }],
                             "should": [
-                                # "counter" → "Counter-Strike" prefix boost
-                                {"match_phrase_prefix": {"name": {"query": q, "boost": 5}}},
-                                # Typing the exact name → largest boost
-                                {"term": {"name.keyword": {"value": q, "boost": 10}}},
+                                # Exact phrase in name ranks highest (e.g. "grand theft auto")
+                                {"match_phrase": {"name": {"query": q, "boost": 10}}},
+                                # Prefix boost for autocomplete-style typing ("counter" → "Counter-Strike")
+                                {"match_phrase_prefix": {"name": {"query": q, "boost": 7}}},
+                                # Exact case-sensitive name (typed the full title)
+                                {"term": {"name.keyword": {"value": q, "boost": 20}}},
                                 # Tag phrase match (case-insensitive via .text sub-field)
-                                {"match": {"tags.text": {"query": q, "boost": 3}}},
-                                # Developer match — "valve" finds all Valve games
-                                {"match": {"developer.text": {"query": q, "boost": 2}}},
+                                {"match_phrase": {"tags.text": {"query": q, "boost": 3}}},
+                                # Developer/publisher match — "valve" finds all Valve games
+                                {"match": {"developer.text": {"query": q, "boost": 4}}},
+                                {"match": {"publisher.text": {"query": q, "boost": 2}}},
                                 # Soft boost: games with cached requirements → CHECK is instant
                                 {"term": {"requirements_cached": True}},
                             ],
@@ -214,21 +219,22 @@ class ESClient:
                     "function_score": {
                         "query": base_query,
                         "functions": [
-                            # log(1 + owners) — CS2 outranks an obscure game with the same prefix
+                            # log(1 + owners) — popular games (CS2, Minecraft) outrank obscure ones
+                            # factor 1.5: CS2 (100k owners) → +17 pts; unknown (10 owners) → +3.6 pts
                             {
                                 "field_value_factor": {
                                     "field": "popularity",
                                     "modifier": "log1p",
-                                    "factor": 0.2,
+                                    "factor": 1.5,
                                     "missing": 1,
                                 }
                             },
-                            # Positive review % (0-100) → scaled to 0-1
+                            # Positive review % (0-100) → up to +5 pts for 100% rating
                             {
                                 "field_value_factor": {
                                     "field": "rating",
                                     "modifier": "none",
-                                    "factor": 0.01,
+                                    "factor": 0.05,
                                     "missing": 50,
                                 }
                             },
@@ -238,6 +244,7 @@ class ESClient:
                     }
                 },
                 size=size,
+                from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "short_description",
                     "header_image", "developer", "is_free", "app_type",
@@ -272,6 +279,8 @@ class ESClient:
         sort: str = "popularity",
         min_rating: int = 0,
         size: int = 30,
+        is_free: bool = None,
+        offset: int = 0,
     ) -> list:
         """
         Catalogue browsing with rich ES filtering and deterministic sorting.
@@ -306,6 +315,19 @@ class ESClient:
             if min_rating > 0:
                 filters.append({"range": {"rating": {"gte": min_rating}}})
 
+            if is_free:
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"term": {"is_free":   True}},
+                            {"term": {"price_usd": 0.0}},
+                            # Fallback: SteamSpy genre tag until is_free/price_usd are indexed
+                            {"term": {"genres": "Free to Play"}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                })
+
             if should:
                 base_q = {
                     "bool": {
@@ -334,6 +356,7 @@ class ESClient:
                 query=base_q,
                 sort=sort_fields,
                 size=size,
+                from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "header_image",
                     "developer", "app_type", "is_free", "popularity", "rating",
@@ -351,6 +374,8 @@ class ESClient:
         genres: list = None,
         exclude_ids: list = None,
         size: int = 30,
+        is_free: bool = None,
+        offset: int = 0,
     ) -> list:
         """
         More Like This recommendation: find games similar to the given app_ids.
@@ -397,10 +422,23 @@ class ESClient:
                     }
                 })
 
+            if is_free:
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"term": {"is_free":   True}},
+                            {"term": {"price_usd": 0.0}},
+                            {"term": {"genres": "Free to Play"}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                })
+
             resp = self._es.search(
                 index=INDEX_NAME,
                 query={"bool": {"must": [mlt], "filter": filters, "must_not": must_not}},
                 size=size,
+                from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "header_image",
                     "developer", "app_type", "is_free", "popularity", "rating",
@@ -423,7 +461,8 @@ class ESClient:
                 aggs={"genres": {"terms": {"field": "genres", "size": 150}}},
             )
             buckets = resp["aggregations"]["genres"]["buckets"]
-            return sorted(b["key"] for b in buckets if b["key"])
+            # "Free to Play" is a pricing category, not a genre — it's exposed via the price filter
+            return sorted(b["key"] for b in buckets if b["key"] and b["key"] != "Free to Play")
         except Exception as e:
             log.error("ES all_genres error: %s", e)
             return []
@@ -514,6 +553,7 @@ class ESClient:
             _metadata_fields = {
                 "name", "header_image", "genres", "tags",
                 "developer", "publisher", "popularity", "rating",
+                "is_free", "price_usd",
             }
             actions = [
                 {

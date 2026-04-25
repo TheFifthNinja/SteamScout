@@ -38,15 +38,15 @@ class SearchService:
 
     # ── Public API (called from Overlay.py Api class) ─────────────────────────
 
-    def search(self, query: str, genres: list = None, tags: list = None, size: int = 30) -> list:
+    def search(self, query: str, genres: list = None, tags: list = None, size: int = 30, offset: int = 0) -> list:
         """Full-text search across name, tags, developer, publisher, description."""
-        key = (query.strip().lower(), tuple(sorted(genres or [])), tuple(sorted(tags or [])))
+        key = (query.strip().lower(), tuple(sorted(genres or [])), tuple(sorted(tags or [])), offset)
         cached = self._search_cache.get(key)
         if cached:
             results, ts = cached
             if time.time() - ts < _SEARCH_CACHE_TTL:
                 return results
-        results = self._es.search(query=query, genres=genres or [], tags=tags or [], size=size)
+        results = self._es.search(query=query, genres=genres or [], tags=tags or [], size=size, offset=offset)
         self._search_cache[key] = (results, time.time())
         return results
 
@@ -72,6 +72,22 @@ class SearchService:
             reqs = self._fetch_requirements(app_id)
             if not reqs:
                 return None
+            if reqs.get("is_unlisted"):
+                doc = cached or {"app_id": app_id, "genres": [], "tags": []}
+                doc.update({
+                    "app_id":              app_id,
+                    "app_type":            "unavailable",
+                    "requirements_cached": True,
+                    "last_enriched":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                })
+                self._es.upsert(doc)
+                result = {
+                    "app_id":   app_id,
+                    "name":     doc.get("name", f"AppID {app_id}"),
+                    "unlisted": True,
+                }
+                self._check_cache[app_id] = result
+                return result
             # Persist to ES cache so next call is instant
             doc = cached or {"app_id": app_id, "genres": [], "tags": []}
             doc.update({
@@ -126,13 +142,17 @@ class SearchService:
         sort: str = "popularity",
         min_rating: int = 0,
         limit: int = 30,
+        price_filter: str = "all",
+        offset: int = 0,
     ) -> list:
         """
         Personalised recommendations using More Like This on the user's checked games.
         Falls back to genre-based browse, then popular games when no history exists.
         """
+        is_free = True if price_filter == "free" else None
+
         if not checked_app_ids:
-            return self._es.browse(sort=sort, min_rating=min_rating, size=limit)
+            return self._es.browse(sort=sort, min_rating=min_rating, size=limit, is_free=is_free, offset=offset)
 
         # Build genre preference from recently checked games
         genre_counts: dict = {}
@@ -149,6 +169,8 @@ class SearchService:
             genres=top_genres or None,
             exclude_ids=checked_app_ids,
             size=limit,
+            is_free=is_free,
+            offset=offset,
         )
         if results:
             return results
@@ -160,12 +182,14 @@ class SearchService:
                 sort=sort,
                 min_rating=min_rating,
                 size=limit + len(checked_app_ids),
+                is_free=is_free,
+                offset=offset,
             )
             filtered = [g for g in candidates if g.get("app_id") not in checked_app_ids]
             if filtered:
                 return filtered[:limit]
 
-        return self._es.browse(sort=sort, min_rating=min_rating, size=limit)
+        return self._es.browse(sort=sort, min_rating=min_rating, size=limit, is_free=is_free, offset=offset)
 
     def get_catalogue(
         self,
@@ -174,15 +198,18 @@ class SearchService:
         sort: str = "popularity",
         min_rating: int = 0,
         limit: int = 30,
+        price_filter: str = "all",
+        offset: int = 0,
     ) -> list:
         """
         Return games for a catalogue section.
         Steam-sourced: sale, trending, new_releases — live from Steam API (prices, discounts).
-        ES-sourced: genre sections — uses browse() with sort/rating filtering.
+        ES-sourced: genre sections — uses browse() with sort/rating/price filtering.
         """
         if section in _SECTION_KEYS:
             return self._fetch_steam_featured(section, limit, country)
-        return self._es.browse(genres=[section], sort=sort, min_rating=min_rating, size=limit)
+        is_free = True if price_filter == "free" else None
+        return self._es.browse(genres=[section], sort=sort, min_rating=min_rating, size=limit, is_free=is_free, offset=offset)
 
     def _fetch_steam_featured(self, section: str, limit: int, country: str = "us") -> list:
         try:
@@ -202,9 +229,9 @@ class SearchService:
                     "name":             item.get("name", ""),
                     "header_image":     item.get("large_capsule_image") or item.get("header_image", ""),
                     "discount_percent": item.get("discount_percent", 0),
-                    "original_price":   item.get("original_price", 0),
-                    "final_price":      item.get("final_price", 0),
-                    "is_free":          item.get("is_free_game", False),
+                    "original_price":   item.get("original_price") or 0,
+                    "final_price":      item.get("final_price") or 0,
+                    "is_free":          item.get("is_free_game", False) or item.get("final_price") == 0,
                     "genres":           [],
                     "compat_cache":     {},
                 }
