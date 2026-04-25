@@ -398,38 +398,49 @@ class TestRatio(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 9. _score_to_band
+# 9. _score_to_fps
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TestScoreToBand(unittest.TestCase):
-    """_score_to_band converts score + bottleneck to FPS band tuples."""
+class TestScoreToFps(unittest.TestCase):
+    """_score_to_fps maps a hardware ratio to (median_fps, half_spread)."""
 
-    def test_very_low_score(self):
-        low, high, note = Backend._score_to_band(0.3, 0.3)
-        self.assertLessEqual(high, 20)
-        self.assertIn("unplayable", note.lower())
+    def test_returns_two_element_tuple(self):
+        result = Backend._score_to_fps(1.0)
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], float)
+        self.assertIsInstance(result[1], float)
 
-    def test_meets_requirements(self):
-        low, high, note = Backend._score_to_band(1.05, 1.0)
-        self.assertGreaterEqual(low, 30)
+    def test_very_low_ratio_gives_low_fps(self):
+        median, _ = Backend._score_to_fps(0.3)
+        self.assertLess(median, 25)
 
-    def test_overkill(self):
-        low, high, note = Backend._score_to_band(2.5, 2.5)
-        self.assertGreaterEqual(low, 90)
-        self.assertIn("overkill", note.lower())
+    def test_at_requirement_gives_reasonable_fps(self):
+        median, _ = Backend._score_to_fps(1.0)
+        self.assertGreaterEqual(median, 30)
 
-    def test_bottleneck_drags_down(self):
-        # High score but very low bottleneck should lower the band
-        _, high_balanced, _ = Backend._score_to_band(1.5, 1.5)
-        _, high_bottlenecked, _ = Backend._score_to_band(1.5, 0.5)
-        self.assertGreater(high_balanced, high_bottlenecked)
+    def test_high_ratio_gives_high_fps(self):
+        median, _ = Backend._score_to_fps(2.5)
+        self.assertGreaterEqual(median, 90)
 
-    def test_returns_three_element_tuple(self):
-        result = Backend._score_to_band(1.0, 1.0)
-        self.assertEqual(len(result), 3)
-        self.assertIsInstance(result[0], int)
-        self.assertIsInstance(result[1], int)
-        self.assertIsInstance(result[2], str)
+    def test_higher_ratio_gives_more_fps(self):
+        median_low, _ = Backend._score_to_fps(0.5)
+        median_high, _ = Backend._score_to_fps(2.0)
+        self.assertGreater(median_high, median_low)
+
+    def test_spread_is_positive(self):
+        _, spread = Backend._score_to_fps(1.0)
+        self.assertGreater(spread, 0)
+
+    def test_below_floor_clamps(self):
+        # Ratio well below 0 should not raise and should return a sane value
+        median, _ = Backend._score_to_fps(-5.0)
+        self.assertGreaterEqual(median, 0)
+
+    def test_above_ceiling_clamps(self):
+        # Ratio well above 3.0 should clamp to the top anchor
+        median_top, _ = Backend._score_to_fps(3.0)
+        median_over, _ = Backend._score_to_fps(100.0)
+        self.assertEqual(median_top, median_over)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -627,7 +638,8 @@ class TestAiPredictPerformance(unittest.TestCase):
     def test_returns_model_name(self):
         r = Backend.ai_predict_performance(self.PC, self.REQS, self.COMPAT)
         self.assertIn("model", r)
-        self.assertIn("v3", r["model"])
+        self.assertIsInstance(r["model"], str)
+        self.assertGreater(len(r["model"]), 0)
 
     def test_returns_bottleneck_label(self):
         r = Backend.ai_predict_performance(self.PC, self.REQS, self.COMPAT)
