@@ -117,6 +117,10 @@ def refresh_steamspy(es):
                 neg    = info.get("negative") or 0
                 rating = round(pos / (pos + neg) * 100) if (pos + neg) > 0 else 0
 
+                price_cents = info.get("price") or 0
+                is_free     = price_cents == 0
+                price_usd   = price_cents / 100.0
+
                 docs.append({
                     "app_id":       app_id,
                     "name":         info.get("name", ""),
@@ -127,6 +131,8 @@ def refresh_steamspy(es):
                     "publisher":    info.get("publisher", ""),
                     "popularity":   popularity,
                     "rating":       rating,
+                    "is_free":      is_free,
+                    "price_usd":    price_usd,
                     # Only set requirements_cached=False on new docs (doc_as_upsert
                     # won't overwrite this field on existing docs via the "doc" path,
                     # but we include it so freshly created docs enter the enrich queue).

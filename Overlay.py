@@ -169,10 +169,88 @@ def _save_settings(data):
     except Exception:
         pass
 
-# ── eBay helpers ───────────────────────────────────────────────────────────────
+# ── Part-price helpers ──────────────────────────────────────────────────────
 
-def _ebay_search_url(query):
-    return f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&_sop=15&LH_BIN=1"
+_GPU_RE = re.compile(
+    r'\b(RTX\s*\d{3,4}(?:\s*(?:Ti\s*Super|Ti|Super))?'
+    r'|GTX\s*\d{3,4}(?:\s*(?:Ti|Super))?'
+    r'|RX\s*\d{3,4}(?:\s*(?:XTX|XT|GRE))?'
+    r'|Arc\s+[A-Z]\d+\w*'
+    r'|Vega\s+\d+)',
+    re.IGNORECASE,
+)
+_CPU_RE = re.compile(
+    r'\b(Core\s+Ultra\s+\d+'
+    r'|i[3579]-\d{4,5}[A-Z]*'
+    r'|Ryzen\s+\d+\s+(?:Pro\s+)?\d{4}[A-Z]*'
+    r'|Athlon\s+\w+)',
+    re.IGNORECASE,
+)
+
+def _retail_query(key, required):
+    """Return a short, specific query suitable for retail search engines."""
+    s = (required or "").strip()
+    if key == "gpu":
+        m = _GPU_RE.search(s)
+        if m:
+            return f"{m.group(0).strip()} graphics card"
+        name = re.sub(
+            r'\b(NVIDIA|AMD|Intel|GeForce|Radeon|or better|equivalent|dedicated|discrete)\b',
+            "", s, flags=re.IGNORECASE,
+        ).strip()[:30]
+        return f"{name} GPU".strip()
+    if key == "cpu":
+        m = _CPU_RE.search(s)
+        if m:
+            return f"{m.group(0).strip()} processor"
+        name = re.sub(
+            r'\b(Intel|AMD|Core|Processor|GHz|MHz|or better)\b',
+            "", s, flags=re.IGNORECASE,
+        ).strip()[:30]
+        return f"{name} processor".strip()
+    if key == "ram":
+        size_m = re.search(r'(\d+)\s*GB', s, re.IGNORECASE)
+        gb = int(size_m.group(1)) if size_m else 16
+        for std in (4, 8, 16, 32, 64):
+            if gb <= std:
+                gb = std
+                break
+        ddr = "DDR5" if "ddr5" in s.lower() else "DDR4"
+        return f"{gb}GB {ddr} RAM"
+    if key == "storage":
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(TB|GB|MB)', s, re.IGNORECASE)
+        size_str = "1TB"
+        if m:
+            val, unit = float(m.group(1)), m.group(2).upper()
+            gb = int(val * 1024) if unit == "TB" else max(1, int(val / 1024)) if unit == "MB" else int(val)
+            for std in (120, 250, 500, 1000, 2000):
+                if gb <= std:
+                    size_str = f"{std}GB" if std < 1000 else f"{std // 1000}TB"
+                    break
+            else:
+                size_str = f"{gb}GB"
+        kind = "NVMe SSD" if "nvme" in s.lower() else "SSD"
+        return f"{size_str} {kind}"
+    return s[:50]
+
+_PCPP_CAT = {
+    "gpu":     "https://pcpartpicker.com/products/video-card",
+    "cpu":     "https://pcpartpicker.com/products/cpu",
+    "ram":     "https://pcpartpicker.com/products/memory",
+    "storage": "https://pcpartpicker.com/products/internal-hard-drive",
+}
+
+def _store_links(key, retail_q):
+    """Return search URLs for multiple retailers for the given retail query."""
+    q = quote_plus(retail_q)
+    links = {
+        "eBay":   f"https://www.ebay.com/sch/i.html?_nkw={q}&_sop=15&LH_BIN=1",
+        "Newegg": f"https://www.newegg.com/p/pl?d={q}&Order=1",
+        "Amazon": f"https://www.amazon.com/s?k={q}&s=price-asc-rank",
+    }
+    if key in _PCPP_CAT:
+        links["PCPartPicker"] = f"{_PCPP_CAT[key]}/#sort=price&xcx=1&search={q}"
+    return links
 
 def _strip_html(text):
     return re.sub(r"<[^>]+>", "", text or "").strip()
@@ -193,21 +271,21 @@ def _extract_ebay_cheapest(html):
     )
     best = None
     for block in cards[:30]:
-        link_m = re.search(r"class=\"s-item__link\"[^>]*href=\"([^\"]+)\"", block, re.IGNORECASE)
-        title_m = re.search(r"class=\"s-item__title\"[^>]*>(.*?)</", block, re.IGNORECASE | re.DOTALL)
-        price_m = re.search(r"class=\"s-item__price\"[^>]*>(.*?)</", block, re.IGNORECASE | re.DOTALL)
+        link_m = re.search(r'class="s-item__link"[^>]*href="([^"]+)"', block, re.IGNORECASE)
+        title_m = re.search(r'class="s-item__title"[^>]*>(.*?)</', block, re.IGNORECASE | re.DOTALL)
+        price_m = re.search(r'class="s-item__price"[^>]*>(.*?)</', block, re.IGNORECASE | re.DOTALL)
         if not link_m or not title_m or not price_m:
             continue
         title = _strip_html(unescape(title_m.group(1)))
         price = _strip_html(unescape(price_m.group(1)))
-        url = unescape(link_m.group(1))
+        url   = unescape(link_m.group(1))
         value = _money_to_float(price)
-        if value is None:
+        if value is None or value < 5:
             continue
         if "shop on ebay" in title.lower() or "results matching fewer words" in title.lower():
             continue
         cand = {"title": title, "price": price, "url": url, "store": "eBay", "price_value": value}
-        if best is None or cand["price_value"] < best["price_value"]:
+        if best is None or value < best["price_value"]:
             best = cand
     if not best:
         return {}
@@ -266,12 +344,12 @@ class Api:
 
     # ── Search API (called async from JS via pywebview bridge) ────────────────
 
-    def search_games(self, query, genres=None, tags=None):
+    def search_games(self, query, genres=None, tags=None, offset=0):
         """Full-text search across name, tags, developer, publisher."""
         _init_search()
         if _search_service is None:
             return []
-        return _search_service.search(query=query or "", genres=genres or [], tags=tags or [])
+        return _search_service.search(query=query or "", genres=genres or [], tags=tags or [], offset=int(offset or 0))
 
     def check_game(self, app_id):
         """Fetch + run compat check for a specific app_id. May take ~2-5s."""
@@ -304,18 +382,22 @@ class Api:
             return []
         return _search_service.all_tags()
 
-    def get_catalogue(self, section="sale", country="us", sort="popularity", min_rating=0):
+    def get_catalogue(self, section="sale", country="us", sort="popularity", min_rating=0, price_filter="all", offset=0):
         """Return games for a catalogue section (sale, trending, new_releases, recommended, or genre)."""
         _init_search()
         if _search_service is None:
             return []
         try:
+            pf = str(price_filter or "all")
+            off = int(offset or 0)
             if section == "recommended":
                 return _search_service.get_recommendations(
-                    _user_checked_ids, sort=sort, min_rating=int(min_rating or 0)
+                    _user_checked_ids, sort=sort, min_rating=int(min_rating or 0),
+                    price_filter=pf, offset=off,
                 )
             return _search_service.get_catalogue(
-                section, country=country, sort=sort, min_rating=int(min_rating or 0)
+                section, country=country, sort=sort, min_rating=int(min_rating or 0),
+                price_filter=pf, offset=off,
             )
         except Exception as e:
             import logging
@@ -448,8 +530,8 @@ class Overlay:
     def start(self):
         """Create the pywebview window and start the WS listener. Blocks."""
         api = Api(self)
-        w = int(self.settings.get("window_width", 520))
-        h = int(self.settings.get("window_height", 260))
+        w = max(_MIN_W, int(self.settings.get("window_width", 520)))
+        h = max(_MIN_H, int(self.settings.get("window_height", 260)))
 
         self._window = webview.create_window(
             "SteamScout",
@@ -688,6 +770,7 @@ class Overlay:
 
     def _prefetch_upgrade_deals(self, data):
         compat = data.get("compat", {})
+        seen = set()
         for tier in ("minimum", "recommended"):
             tier_data = compat.get(tier, {})
             for key in ("ram", "cpu", "gpu", "storage"):
@@ -695,85 +778,50 @@ class Overlay:
                 if not row or row.get("status") != "fail":
                     continue
                 required = row.get("required", "")
-                query = self._upgrade_query(key, required)
-                if query in self._deal_cache:
+                rq = _retail_query(key, required)
+                if rq in seen or rq in self._deal_cache:
                     continue
-                self._deal_cache[query] = {"loading": True, "url": _ebay_search_url(query)}
-                threading.Thread(target=self._fetch_deal, args=(query,), daemon=True).start()
+                seen.add(rq)
+                links = _store_links(key, rq)
+                self._deal_cache[rq] = {
+                    "loading": True,
+                    "url": links.get("eBay", ""),
+                    "store_links": links,
+                }
+                threading.Thread(target=self._fetch_deal, args=(key, rq), daemon=True).start()
 
-    def _fetch_deal(self, query):
-        url = _ebay_search_url(query)
-        headers = {"User-Agent": "Mozilla/5.0"}
-        deal = {"loading": False, "url": url, "title": "", "price": "", "store": "eBay"}
+    def _fetch_deal(self, key, retail_q):
+        links = _store_links(key, retail_q)
+        ebay_url = links["eBay"]
+        deal = {
+            "loading": False,
+            "url": ebay_url,
+            "title": "",
+            "price": "",
+            "store": "",
+            "store_links": links,
+        }
         try:
-            r = requests.get(url, headers=headers, timeout=10)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            }
+            r = requests.get(ebay_url, headers=headers, timeout=12)
             if r.ok:
                 parsed = _extract_ebay_cheapest(r.text)
                 if parsed.get("url"):
                     deal.update(parsed)
         except Exception:
             pass
-        self._deal_cache[query] = deal
+        self._deal_cache[retail_q] = deal
         if self._last_result:
             self._push_deals()
 
     def _push_deals(self):
         self._push_to_js("updateDeals", self._deal_cache)
-
-    # ── Upgrade query logic ────────────────────────────────────────────────
-
-    def _is_vague_requirement(self, key, required):
-        s = (required or "").strip().lower()
-        if not s:
-            return True
-        vague = [
-            "hardware accelerated", "dedicated memory", "compatible",
-            "or better", "equivalent", "support", "shader", "feature level",
-            "dx", "directx", "intel hd", "integrated graphics",
-            "see notes", "tbd", "unknown",
-        ]
-        if any(m in s for m in vague):
-            return True
-        if key in {"ram", "storage"} and not re.search(r"\b\d+(?:\.\d+)?\s*(tb|gb|mb)\b", s, re.IGNORECASE):
-            return True
-        return False
-
-    def _extract_size_gb(self, text):
-        m = re.search(r"(\d+(?:\.\d+)?)\s*(tb|gb|mb)\b", text or "", re.IGNORECASE)
-        if not m:
-            return None
-        value = float(m.group(1))
-        unit = m.group(2).lower()
-        if unit == "tb": return int(round(value * 1024))
-        if unit == "mb": return max(1, int(round(value / 1024)))
-        return int(round(value))
-
-    def _upgrade_query(self, key, required):
-        required = re.sub(r"\s+", " ", (required or "").strip())
-        mode = self.settings.get("upgrade_query_mode", "specific")
-        vague = self._is_vague_requirement(key, required)
-        if key == "ram":
-            if mode == "general": return "gaming PC RAM upgrade"
-            size_gb = self._extract_size_gb(required)
-            if size_gb: return f"buy {size_gb}GB desktop RAM DDR4 or DDR5"
-            if vague: return "desktop gaming RAM upgrade kit"
-            return f"buy {required} desktop RAM"
-        if key == "storage":
-            if mode == "general": return "gaming PC SSD storage upgrade"
-            size_gb = self._extract_size_gb(required)
-            kind = "SSD" if "ssd" in required.lower() or "nvme" in required.lower() else "drive"
-            if size_gb: return f"buy {size_gb}GB {kind} for PC"
-            if vague: return "gaming PC SSD storage upgrade"
-            return f"buy {required} PC storage"
-        if key == "cpu":
-            if mode == "general": return "gaming PC CPU upgrade"
-            if vague: return "gaming PC CPU upgrade"
-            return f"buy PC CPU similar or better than {required}"
-        if key == "gpu":
-            if mode == "general": return "gaming PC graphics card upgrade"
-            if vague: return "gaming PC dedicated graphics card upgrade"
-            return f"buy graphics card similar or better than {required}"
-        return f"buy PC part upgrade {required}"
 
     # ── Auto-launch (registry) ─────────────────────────────────────────────
 
