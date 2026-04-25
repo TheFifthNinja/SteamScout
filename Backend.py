@@ -264,7 +264,10 @@ def fetch_requirements(app_id: int) -> Optional[dict]:
         data    = r.json()
         payload = data.get(str(app_id), {})
         if not payload.get("success"):
-            return None
+            # App is unlisted, removed, or private — distinguish from a network error
+            result = {"app_id": app_id, "is_unlisted": True}
+            _req_cache[app_id] = result
+            return result
         d = payload["data"]
         pc_req = d.get("pc_requirements", {})
         # Some Steam apps return pc_requirements as a list or string instead of dict
@@ -275,6 +278,7 @@ def fetch_requirements(app_id: int) -> Optional[dict]:
             "name":         d.get("name", "Unknown"),
             "header_image": d.get("header_image", ""),
             "app_type":     d.get("type", "game"),
+            "is_free":      d.get("is_free", False),
             "minimum":      _parse_reqs(pc_req.get("minimum", "")),
             "recommended":  _parse_reqs(pc_req.get("recommended", "")),
         }
