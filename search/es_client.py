@@ -1,10 +1,6 @@
 """
-Elasticsearch client wrapper for SteamScout.
-
-Defaults to the hosted Elastic Cloud instance. Override via env vars:
-  STEAMSCOUT_ES_HOST      - custom endpoint (overrides cloud default)
-  STEAMSCOUT_ES_API_KEY   - API key (overrides built-in key)
-  STEAMSCOUT_ES_CLOUD_ID  - Elastic Cloud ID (alternative auth)
+Elasticsearch client for SteamScout. Connects to our Elastic Cloud instance by default.
+Override with STEAMSCOUT_ES_HOST / STEAMSCOUT_ES_API_KEY / STEAMSCOUT_ES_CLOUD_ID env vars.
 """
 
 import os
@@ -16,50 +12,49 @@ log = logging.getLogger(__name__)
 INDEX_NAME = "steam_games"
 
 _CLOUD_ENDPOINT = "https://steamscout-fa1ff8.es.us-east-1.aws.elastic.cloud"
-# Read-only key — safe to distribute. Override with STEAMSCOUT_ES_API_KEY for write access (indexing).
-_CLOUD_API_KEY  = "XzFzWnZwMEJXYkVRSzExb1BMM0E6X29EdnZDOXlTSjZrbXBEbFhLUEFwZw=="
+# read-only key — safe to ship. Set STEAMSCOUT_ES_API_KEY for write access.
+_CLOUD_API_KEY = "XzFzWnZwMEJXYkVRSzExb1BMM0E6X29EdnZDOXlTSjZrbXBEbFhLUEFwZw=="
 
 _MAPPING = {
     "mappings": {
         "properties": {
-            "app_id":              {"type": "keyword"},
-            "name":                {
+            "app_id": {"type": "keyword"},
+            "name": {
                 "type": "text",
                 "analyzer": "standard",
                 "fields": {"keyword": {"type": "keyword"}},
             },
-            "genres":              {"type": "keyword"},
-            "tags":                {
+            "genres": {"type": "keyword"},
+            "tags": {
                 "type": "keyword",
                 "fields": {"text": {"type": "text", "analyzer": "standard"}},
             },
-            "short_description":   {"type": "text"},
-            "developer":           {
+            "short_description": {"type": "text"},
+            "developer": {
                 "type": "keyword",
                 "fields": {"text": {"type": "text", "analyzer": "standard"}},
             },
-            "publisher":           {
+            "publisher": {
                 "type": "keyword",
                 "fields": {"text": {"type": "text", "analyzer": "standard"}},
             },
-            "app_type":            {"type": "keyword"},
-            "is_free":             {"type": "boolean"},
-            "price_usd":           {"type": "float"},
-            "header_image":        {"type": "keyword", "index": False},
+            "app_type": {"type": "keyword"},
+            "is_free": {"type": "boolean"},
+            "price_usd": {"type": "float"},
+            "header_image": {"type": "keyword", "index": False},
             "requirements_cached": {"type": "boolean"},
-            "popularity":          {"type": "integer"},
-            "rating":              {"type": "integer"},
-            "min_reqs":            {"type": "object", "enabled": False},
-            "rec_reqs":            {"type": "object", "enabled": False},
-            "compat_cache":        {"type": "object", "enabled": False},
-            "last_enriched":       {"type": "date"},
+            "popularity": {"type": "integer"},
+            "rating": {"type": "integer"},
+            "min_reqs": {"type": "object", "enabled": False},
+            "rec_reqs": {"type": "object", "enabled": False},
+            "compat_cache": {"type": "object", "enabled": False},
+            "last_enriched": {"type": "date"},
         }
     },
 }
 
 
 def _build_es():
-    """Build an Elasticsearch client. Returns None if unavailable."""
     try:
         from elasticsearch import Elasticsearch
     except ImportError:
@@ -67,16 +62,14 @@ def _build_es():
         return None
 
     cloud_id = os.environ.get("STEAMSCOUT_ES_CLOUD_ID")
-    host     = os.environ.get("STEAMSCOUT_ES_HOST", _CLOUD_ENDPOINT)
-    api_key  = os.environ.get("STEAMSCOUT_ES_API_KEY", _CLOUD_API_KEY)
+    host = os.environ.get("STEAMSCOUT_ES_HOST", _CLOUD_ENDPOINT)
+    api_key = os.environ.get("STEAMSCOUT_ES_API_KEY", _CLOUD_API_KEY)
 
     try:
         if cloud_id:
             es = Elasticsearch(cloud_id=cloud_id, api_key=api_key)
         else:
             es = Elasticsearch(host, api_key=api_key)
-
-        # No cluster-level check here — connectivity is verified in _ensure_index
         log.info("Elasticsearch client created for %s", host)
         return es
     except Exception as e:
@@ -85,22 +78,18 @@ def _build_es():
 
 
 def _is_auth_error(e: Exception) -> bool:
-    """True for 403 / unauthorized responses — expected when using the read-only key."""
+    # 403 is expected when running with the read-only API key
     s = str(e)
     return "403" in s or "unauthorized" in s.lower() or "AuthorizationException" in type(e).__name__
 
 
 class ESClient:
-    """
-    Thin wrapper around the elasticsearch-py client.
-    All public methods fail silently and return empty/None when ES is unavailable.
-    Write methods are additionally skipped when the API key is read-only (403).
-    """
+    """Thin wrapper around elasticsearch-py. All methods fail silently when ES is down."""
 
     def __init__(self):
         self._es = _build_es()
         self._available = self._es is not None
-        self._writable   = True   # flipped to False on first 403 write response
+        self._writable = True  # flipped to False on first 403 write
         if self._available:
             self._ensure_index()
 
@@ -108,15 +97,10 @@ class ESClient:
     def available(self) -> bool:
         return self._available
 
-    # ── Index management ───────────────────────────────────────────────────────
-
     def _ensure_index(self):
         try:
             if not self._es.indices.exists(index=INDEX_NAME):
-                self._es.indices.create(
-                    index=INDEX_NAME,
-                    mappings=_MAPPING["mappings"],
-                )
+                self._es.indices.create(index=INDEX_NAME, mappings=_MAPPING["mappings"])
                 log.info("Created Elasticsearch index '%s'", INDEX_NAME)
             else:
                 self._es.indices.put_mapping(
@@ -124,15 +108,13 @@ class ESClient:
                     properties=_MAPPING["mappings"]["properties"],
                 )
         except Exception:
-            # Read-only API key can't manage index metadata — verify read access instead
+            # read-only key can't manage index metadata — just check we can read
             try:
                 self._es.search(index=INDEX_NAME, query={"match_all": {}}, size=1)
                 log.info("Connected to Elasticsearch (read-only mode).")
             except Exception as e:
                 log.error("Cannot read from Elasticsearch index: %s", e)
                 self._available = False
-
-    # ── Read ───────────────────────────────────────────────────────────────────
 
     def count(self) -> int:
         if not self._available:
@@ -158,9 +140,9 @@ class ESClient:
         tags: list = None,
         size: int = 30,
         offset: int = 0,
-    ) -> list:
+    ) -> dict:
         if not self._available:
-            return []
+            return {"results": [], "facets": {}, "total": 0}
         try:
             filters = []
             if genres:
@@ -177,11 +159,11 @@ class ESClient:
 
             if q:
                 if len(q) <= 2:
-                    # Very short queries: prefix only — fuzzy on 1-2 chars returns garbage
+                    # fuzzy on 1-2 chars returns garbage, just do prefix
                     base_query = {
                         "bool": {
                             "must": [{"match_phrase_prefix": {"name": q}}],
-                            "filter":   filters,
+                            "filter": filters,
                             "must_not": must_not,
                         }
                     }
@@ -191,7 +173,6 @@ class ESClient:
                             "must": [{
                                 "multi_match": {
                                     "query": q,
-                                    # developer.text / tags.text use standard analyser → case-insensitive
                                     "fields": [
                                         "name^6",
                                         "tags.text^2",
@@ -207,21 +188,17 @@ class ESClient:
                                 }
                             }],
                             "should": [
-                                # Exact phrase in name ranks highest (e.g. "grand theft auto")
                                 {"match_phrase": {"name": {"query": q, "boost": 10}}},
-                                # Prefix boost for autocomplete-style typing ("counter" → "Counter-Strike")
                                 {"match_phrase_prefix": {"name": {"query": q, "boost": 7}}},
-                                # Exact case-sensitive name (typed the full title)
                                 {"term": {"name.keyword": {"value": q, "boost": 20}}},
-                                # Tag phrase match (case-insensitive via .text sub-field)
                                 {"match_phrase": {"tags.text": {"query": q, "boost": 3}}},
-                                # Developer/publisher match — "valve" finds all Valve games
+                                # "valve" → all Valve games
                                 {"match": {"developer.text": {"query": q, "boost": 4}}},
                                 {"match": {"publisher.text": {"query": q, "boost": 2}}},
-                                # Soft boost: games with cached requirements → CHECK is instant
+                                # games with cached reqs let the user CHECK immediately
                                 {"term": {"requirements_cached": True}},
                             ],
-                            "filter":   filters,
+                            "filter": filters,
                             "must_not": must_not,
                         }
                     }
@@ -234,8 +211,7 @@ class ESClient:
                     "function_score": {
                         "query": base_query,
                         "functions": [
-                            # log(1 + owners) — popular games (CS2, Minecraft) outrank obscure ones
-                            # factor 1.5: CS2 (100k owners) → +17 pts; unknown (10 owners) → +3.6 pts
+                            # log1p(owners) — CS2 gets ~17pts, some random shovelware gets ~3
                             {
                                 "field_value_factor": {
                                     "field": "popularity",
@@ -244,7 +220,7 @@ class ESClient:
                                     "missing": 1,
                                 }
                             },
-                            # Positive review % (0-100) → up to +5 pts for 100% rating
+                            # rating is 0-100 → up to +5 pts at 100%
                             {
                                 "field_value_factor": {
                                     "field": "rating",
@@ -260,10 +236,10 @@ class ESClient:
                 },
                 highlight={
                     "fields": {
-                        "name":              {"number_of_fragments": 1, "fragment_size": 100},
+                        "name": {"number_of_fragments": 1, "fragment_size": 100},
                         "short_description": {"number_of_fragments": 1, "fragment_size": 150},
                     },
-                    "pre_tags":  ["<mark>"],
+                    "pre_tags": ["<mark>"],
                     "post_tags": ["</mark>"],
                 },
                 aggs={
@@ -283,26 +259,24 @@ class ESClient:
                 hl = h.get("highlight", {})
                 if hl:
                     src["_highlight"] = {
-                        "name":    (hl.get("name")              or [None])[0],
+                        "name": (hl.get("name") or [None])[0],
                         "snippet": (hl.get("short_description") or [None])[0],
                     }
                 results.append(src)
             facets = {
-                k: [{"key": b["key"], "count": b["doc_count"]}
-                    for b in v.get("buckets", [])]
+                k: [{"key": b["key"], "count": b["doc_count"]} for b in v.get("buckets", [])]
                 for k, v in resp.get("aggregations", {}).items()
             }
             return {
                 "results": results,
-                "facets":  facets,
-                "total":   resp["hits"]["total"]["value"],
+                "facets": facets,
+                "total": resp["hits"]["total"]["value"],
             }
         except Exception as e:
             log.error("ES search error: %s", e)
-            return []
+            return {"results": [], "facets": {}, "total": 0}
 
     def get_uncached(self, size: int = 10) -> list:
-        """Return games that don't yet have requirements cached, for enrichment."""
         if not self._available:
             return []
         try:
@@ -327,16 +301,6 @@ class ESClient:
         is_free: bool = None,
         offset: int = 0,
     ) -> list:
-        """
-        Catalogue browsing with rich ES filtering and deterministic sorting.
-
-        Genre filter uses three tiers of fallback so results appear even when the
-        genres field is not yet populated from SteamSpy:
-          1. Exact keyword on genres field (fast, precise)
-          2. Genre name matched as text in the tags field (same SteamSpy source)
-          3. Genre name matched in the game name (last resort)
-        Docs missing the popularity/rating fields sort last automatically.
-        """
         if not self._available:
             return []
         try:
@@ -350,10 +314,12 @@ class ESClient:
             should = []
 
             if genres:
+                # try exact genre keyword first, then fall back to tags.text and name
+                # so results show up even if the genres field isn't populated yet
                 should.append({"terms": {"genres": genres}})
                 for g in genres:
-                    should.append({"match": {"tags.text":  {"query": g, "boost": 0.5}}})
-                    should.append({"match": {"name":       {"query": g, "boost": 0.2}}})
+                    should.append({"match": {"tags.text": {"query": g, "boost": 0.5}}})
+                    should.append({"match": {"name": {"query": g, "boost": 0.2}}})
 
             if tags:
                 should.append({"terms": {"tags": tags}})
@@ -365,9 +331,8 @@ class ESClient:
                 filters.append({
                     "bool": {
                         "should": [
-                            {"term": {"is_free":   True}},
+                            {"term": {"is_free": True}},
                             {"term": {"price_usd": 0.0}},
-                            # Fallback: SteamSpy genre tag until is_free/price_usd are indexed
                             {"term": {"genres": "Free to Play"}},
                         ],
                         "minimum_should_match": 1,
@@ -379,7 +344,7 @@ class ESClient:
                     "bool": {
                         "should": should,
                         "minimum_should_match": 1,
-                        "filter":   filters,
+                        "filter": filters,
                         "must_not": must_not,
                     }
                 }
@@ -388,13 +353,12 @@ class ESClient:
             else:
                 base_q = {"bool": {"must_not": must_not}}
 
-            # unmapped_type prevents a 400 if popularity/rating aren't in the
-            # live mapping yet (e.g. put_mapping was blocked by a read-only key).
+            # unmapped_type=integer stops ES throwing a 400 if put_mapping was blocked
             _last = {"order": "desc", "missing": "_last", "unmapped_type": "integer"}
             sort_fields = {
                 "popularity": [{"popularity": _last}, {"rating": _last}],
-                "rating":     [{"rating": _last},     {"popularity": _last}],
-                "name":       [{"name.keyword": "asc"}],
+                "rating": [{"rating": _last}, {"popularity": _last}],
+                "name": [{"name.keyword": "asc"}],
             }.get(sort, [{"popularity": _last}])
 
             resp = self._es.search(
@@ -423,11 +387,6 @@ class ESClient:
         is_free: bool = None,
         offset: int = 0,
     ) -> list:
-        """
-        More Like This recommendation: find games similar to the given app_ids.
-        Matches on tags, genres, and developer text fields.
-        Optionally boosts results matching known genre preferences.
-        """
         if not self._available or not app_ids:
             return []
         try:
@@ -498,7 +457,6 @@ class ESClient:
             return []
 
     def all_genres(self) -> list:
-        """Return all genre values present in the index, sorted alphabetically."""
         if not self._available:
             return []
         try:
@@ -508,14 +466,13 @@ class ESClient:
                 aggs={"genres": {"terms": {"field": "genres", "size": 150}}},
             )
             buckets = resp["aggregations"]["genres"]["buckets"]
-            # "Free to Play" is a pricing category, not a genre — it's exposed via the price filter
+            # "Free to Play" is a price category, not a genre — exposed via the price filter instead
             return sorted(b["key"] for b in buckets if b["key"] and b["key"] != "Free to Play")
         except Exception as e:
             log.error("ES all_genres error: %s", e)
             return []
 
     def all_tags(self) -> list:
-        """Return the top 50 most common tags, ordered by popularity."""
         if not self._available:
             return []
         try:
@@ -531,7 +488,6 @@ class ESClient:
             return []
 
     def suggest_names(self, prefix: str, size: int = 6) -> list:
-        """Fast name-prefix lookup for search autocomplete. Returns app_id, name, header_image, genres."""
         if not self._available or not (prefix or "").strip():
             return []
         try:
@@ -560,10 +516,7 @@ class ESClient:
             log.error("ES suggest_names error: %s", e)
             return []
 
-    # ── Meta (cursor / config storage) ────────────────────────────────────────
-
     def get_meta(self, key: str) -> Optional[dict]:
-        """Retrieve a named metadata document (not a game doc)."""
         if not self._available:
             return None
         try:
@@ -573,7 +526,6 @@ class ESClient:
             return None
 
     def set_meta(self, key: str, value: dict):
-        """Persist a named metadata document."""
         if not self._available or not self._writable:
             return
         try:
@@ -584,8 +536,6 @@ class ESClient:
                 self._writable = False
             else:
                 log.error("ES set_meta error for key '%s': %s", key, e)
-
-    # ── Write ──────────────────────────────────────────────────────────────────
 
     def upsert(self, doc: dict):
         if not self._available or not self._writable:
@@ -601,7 +551,6 @@ class ESClient:
                 log.error("ES upsert error for app %s: %s", doc.get("app_id"), e)
 
     def bulk_upsert(self, docs: list) -> int:
-        """Bulk-index a list of game dicts. Returns count of successful docs."""
         if not self._available or not docs:
             return 0
         try:
@@ -622,7 +571,7 @@ class ESClient:
             return 0
 
     def bulk_create(self, docs: list) -> int:
-        """Create new game docs only — existing docs are untouched. Returns count of new docs created."""
+        # create-only so existing docs are never clobbered
         if not self._available or not docs:
             return 0
         try:
@@ -644,14 +593,8 @@ class ESClient:
             return 0
 
     def bulk_update_genres(self, docs: list) -> int:
-        """
-        Upsert genre/tag/developer/popularity/rating fields.
-
-        On existing docs: updates only the supplied fields (requirements_cached
-        is intentionally excluded so enrichment progress is never reset).
-        On new docs: creates the full document including requirements_cached=False
-        so the enrichment loop picks it up.
-        """
+        # on existing docs: only update metadata fields — never touch requirements_cached
+        # on new docs: create the whole thing so the enrichment loop picks it up
         if not self._available or not docs:
             return 0
         try:
@@ -664,12 +607,9 @@ class ESClient:
             actions = [
                 {
                     "_op_type": "update",
-                    "_index":   INDEX_NAME,
-                    "_id":      str(d["app_id"]),
-                    # Update only metadata fields on existing docs
-                    "doc": {k: v for k, v in d.items()
-                            if k != "app_id" and k in _metadata_fields},
-                    # On create: include requirements_cached so doc enters enrich queue
+                    "_index": INDEX_NAME,
+                    "_id": str(d["app_id"]),
+                    "doc": {k: v for k, v in d.items() if k != "app_id" and k in _metadata_fields},
                     "upsert": {k: v for k, v in d.items() if k != "app_id"},
                 }
                 for d in docs
