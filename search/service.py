@@ -62,11 +62,13 @@ class SearchService:
 
         if cached and cached.get("requirements_cached") and cached.get("min_reqs"):
             reqs = {
-                "app_id": app_id,
-                "name": cached.get("name", f"AppID {app_id}"),
-                "header_image": cached.get("header_image", ""),
-                "minimum": cached.get("min_reqs") or {},
+                "app_id":      app_id,
+                "name":        cached.get("name", f"AppID {app_id}"),
+                "header_image":cached.get("header_image", ""),
+                "minimum":     cached.get("min_reqs") or {},
                 "recommended": cached.get("rec_reqs") or {},
+                "is_free":     cached.get("is_free", False),
+                "price_usd":   cached.get("price_usd"),
             }
         else:
             reqs = self._fetch_requirements(app_id)
@@ -101,6 +103,12 @@ class SearchService:
                 "last_enriched": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
             self._es.upsert(doc)
+            # Carry SteamSpy price data into reqs (not returned by Steam requirements API)
+            if cached:
+                if reqs.get("price_usd") is None:
+                    reqs["price_usd"] = cached.get("price_usd")
+                if not reqs.get("is_free") and cached.get("is_free"):
+                    reqs["is_free"] = True
 
         pc = self._pc_specs()
         if not pc:
@@ -135,6 +143,10 @@ class SearchService:
     def all_tags(self) -> list:
         """Return the top 50 most common tags (for tag-filter chips)."""
         return self._es.all_tags()
+
+    def suggest(self, prefix: str) -> list:
+        """Name-prefix autocomplete — returns [{app_id, name, header_image, genres}, ...]."""
+        return self._es.suggest_names(prefix)
 
     def get_recommendations(
         self,
