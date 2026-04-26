@@ -1,7 +1,4 @@
-"""
-SearchService — the main interface for the search feature.
-Called directly from Overlay.py's pywebview Api class (thread-safe).
-"""
+"""SearchService — the main interface for the search feature."""
 
 import logging
 import time
@@ -32,14 +29,10 @@ class SearchService:
         self._fetch_requirements = fetch_requirements_fn
         self._check_compat = check_compat_fn
         self._pc_specs = pc_specs_fn
-        # In-memory caches — live for the duration of the session
-        self._search_cache: dict = {}   # (query, genres_tuple) → (results, timestamp)
-        self._check_cache: dict = {}    # app_id → result dict
+        self._search_cache: dict = {}  # (query, genres, tags, offset) → (results, timestamp)
+        self._check_cache: dict = {}   # app_id → result dict
 
-    # ── Public API (called from Overlay.py Api class) ─────────────────────────
-
-    def search(self, query: str, genres: list = None, tags: list = None, size: int = 30, offset: int = 0) -> list:
-        """Full-text search across name, tags, developer, publisher, description."""
+    def search(self, query: str, genres: list = None, tags: list = None, size: int = 30, offset: int = 0) -> dict:
         key = (query.strip().lower(), tuple(sorted(genres or [])), tuple(sorted(tags or [])), offset)
         cached = self._search_cache.get(key)
         if cached:
@@ -51,10 +44,6 @@ class SearchService:
         return results
 
     def check_game(self, app_id: int) -> Optional[dict]:
-        """
-        Return full compatibility data for a game.
-        Uses in-memory cache first, then ES cache, then Steam API.
-        """
         if app_id in self._check_cache:
             return self._check_cache[app_id]
 
@@ -62,13 +51,13 @@ class SearchService:
 
         if cached and cached.get("requirements_cached") and cached.get("min_reqs"):
             reqs = {
-                "app_id":      app_id,
-                "name":        cached.get("name", f"AppID {app_id}"),
-                "header_image":cached.get("header_image", ""),
-                "minimum":     cached.get("min_reqs") or {},
+                "app_id": app_id,
+                "name": cached.get("name", f"AppID {app_id}"),
+                "header_image": cached.get("header_image", ""),
+                "minimum": cached.get("min_reqs") or {},
                 "recommended": cached.get("rec_reqs") or {},
-                "is_free":     cached.get("is_free", False),
-                "price_usd":   cached.get("price_usd"),
+                "is_free": cached.get("is_free", False),
+                "price_usd": cached.get("price_usd"),
             }
         else:
             reqs = self._fetch_requirements(app_id)
@@ -77,15 +66,15 @@ class SearchService:
             if reqs.get("is_unlisted"):
                 doc = cached or {"app_id": app_id, "genres": [], "tags": []}
                 doc.update({
-                    "app_id":              app_id,
-                    "app_type":            "unavailable",
+                    "app_id": app_id,
+                    "app_type": "unavailable",
                     "requirements_cached": True,
-                    "last_enriched":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "last_enriched": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 })
                 self._es.upsert(doc)
                 result = {
-                    "app_id":   app_id,
-                    "name":     doc.get("name", f"AppID {app_id}"),
+                    "app_id": app_id,
+                    "name": doc.get("name", f"AppID {app_id}"),
                     "unlisted": True,
                 }
                 self._check_cache[app_id] = result
@@ -103,7 +92,7 @@ class SearchService:
                 "last_enriched": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
             self._es.upsert(doc)
-            # Carry SteamSpy price data into reqs (not returned by Steam requirements API)
+            # Steam's requirements API doesn't return price — pull it from SteamSpy if we have it
             if cached:
                 if reqs.get("price_usd") is None:
                     reqs["price_usd"] = cached.get("price_usd")
@@ -116,7 +105,6 @@ class SearchService:
 
         compat = self._check_compat(pc, reqs)
 
-        # Update compat_cache in ES
         doc = self._es.get(app_id)
         if doc:
             doc["compat_cache"] = {
@@ -137,15 +125,12 @@ class SearchService:
         return result
 
     def all_genres(self) -> list:
-        """Return all genres in the index (for the genre-filter chips)."""
         return self._es.all_genres()
 
     def all_tags(self) -> list:
-        """Return the top 50 most common tags (for tag-filter chips)."""
         return self._es.all_tags()
 
     def suggest(self, prefix: str) -> list:
-        """Name-prefix autocomplete — returns [{app_id, name, header_image, genres}, ...]."""
         return self._es.suggest_names(prefix)
 
     def get_recommendations(
@@ -157,16 +142,11 @@ class SearchService:
         price_filter: str = "all",
         offset: int = 0,
     ) -> list:
-        """
-        Personalised recommendations using More Like This on the user's checked games.
-        Falls back to genre-based browse, then popular games when no history exists.
-        """
         is_free = True if price_filter == "free" else None
 
         if not checked_app_ids:
             return self._es.browse(sort=sort, min_rating=min_rating, size=limit, is_free=is_free, offset=offset)
 
-        # Build genre preference from recently checked games
         genre_counts: dict = {}
         for app_id in checked_app_ids[-30:]:
             doc = self._es.get(app_id)
@@ -175,7 +155,6 @@ class SearchService:
                     genre_counts[genre] = genre_counts.get(genre, 0) + 1
         top_genres = sorted(genre_counts, key=genre_counts.__getitem__, reverse=True)[:5]
 
-        # Primary: More Like This — richest similarity signal
         results = self._es.get_similar(
             checked_app_ids[-15:],
             genres=top_genres or None,
@@ -187,7 +166,7 @@ class SearchService:
         if results:
             return results
 
-        # Fallback: genre-based browse excluding already-checked
+        # MLT came up empty — fall back to genre browsing
         if top_genres:
             candidates = self._es.browse(
                 genres=top_genres[:3],
@@ -213,11 +192,7 @@ class SearchService:
         price_filter: str = "all",
         offset: int = 0,
     ) -> list:
-        """
-        Return games for a catalogue section.
-        Steam-sourced: sale, trending, new_releases — live from Steam API (prices, discounts).
-        ES-sourced: genre sections — uses browse() with sort/rating/price filtering.
-        """
+        # sale/trending/new_releases come from Steam directly; genre sections use ES
         if section in _SECTION_KEYS:
             return self._fetch_steam_featured(section, limit, country)
         is_free = True if price_filter == "free" else None
@@ -225,7 +200,7 @@ class SearchService:
 
     def _fetch_steam_featured(self, section: str, limit: int, country: str = "us") -> list:
         try:
-            # When country is "auto", omit cc so Steam prices from the user's own IP.
+            # "auto" → omit cc param so Steam uses the user's own IP for regional pricing
             if country == "auto":
                 url = "https://store.steampowered.com/api/featuredcategories?l=en"
             else:
