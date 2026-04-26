@@ -117,9 +117,12 @@ def refresh_steamspy(es):
                 neg    = info.get("negative") or 0
                 rating = round(pos / (pos + neg) * 100) if (pos + neg) > 0 else 0
 
-                price_cents = info.get("price") or 0
-                is_free     = price_cents == 0
-                price_usd   = price_cents / 100.0
+                try:
+                    price_cents = int(info.get("price") or 0)
+                except (ValueError, TypeError):
+                    price_cents = 0
+                is_free   = price_cents == 0
+                price_usd = price_cents / 100.0
 
                 docs.append({
                     "app_id":       app_id,
