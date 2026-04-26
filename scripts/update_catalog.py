@@ -66,8 +66,14 @@ def main():
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
-def _fetch_steamspy_page(page: int) -> dict:
-    """Fetch one SteamSpy page, retrying on empty/invalid JSON."""
+def _fetch_steamspy_page(page: int, retry_empty: bool = True) -> dict:
+    """
+    Fetch one SteamSpy page, retrying on transient errors.
+
+    retry_empty=False skips retries when the body is empty so that jobs for
+    pages beyond SteamSpy's last page exit in <1 second instead of burning
+    30+ seconds on retries that will never succeed.
+    """
     for attempt in range(_STEAMSPY_RETRIES):
         try:
             r = requests.get(STEAMSPY_PAGE_URL.format(page=page), timeout=30)
@@ -75,6 +81,8 @@ def _fetch_steamspy_page(page: int) -> dict:
                 raise requests.HTTPError(response=r)
             text = r.text.strip()
             if not text:
+                if not retry_empty:
+                    return {}
                 raise ValueError("empty response body")
             return r.json()
         except Exception as e:
@@ -186,12 +194,22 @@ def refresh_steamspy_page(es, page: int):
     Fetch exactly one SteamSpy page and write it to ES.
     Called by each GitHub Actions matrix job.
     """
+    # Page 1 frequently gets the recycled runner from page 0 (same IP).
+    # Give it a long enough window that SteamSpy's rate limit has expired.
+    # Other pages use a shorter stagger to spread the burst across runners.
+    if page == 1:
+        time.sleep(30)
+    elif page % 10:
+        time.sleep((page % 10) * 0.5)
+
     log.info("Matrix mode: fetching SteamSpy page %d...", page)
     try:
-        data = _fetch_steamspy_page(page)
+        # retry_empty=False so pages beyond SteamSpy's last page exit instantly
+        # rather than wasting 30+ seconds retrying an empty response.
+        data = _fetch_steamspy_page(page, retry_empty=False)
     except Exception as e:
-        log.error("SteamSpy page %d failed: %s", page, e)
-        sys.exit(1)
+        log.warning("SteamSpy page %d: %s — treating as beyond last page.", page, e)
+        return
 
     if not data:
         log.info("SteamSpy page %d: no data (page beyond last).", page)

@@ -33,9 +33,10 @@ jobs:
       pages: ${{ steps.gen.outputs.pages }}
     steps:
       - id: gen
-        # SteamSpy has ~83 pages of 1000 games each; 100 is a safe upper bound.
-        # Pages beyond the actual count return empty data and exit cleanly.
-        run: echo "pages=$(python3 -c 'import json; print(json.dumps(list(range(100))))')" >> $GITHUB_OUTPUT
+        # SteamSpy grows as Steam does (~5-10 pages/year). 200 pages covers
+        # ~200k games — well beyond Steam's current ~110k active titles.
+        # Pages beyond the actual last page exit in <1 second (no retries).
+        run: echo "pages=$(python3 -c 'import json; print(json.dumps(list(range(200))))')" >> $GITHUB_OUTPUT
 
   # ── Phase 3: update SteamSpy metadata — one job per page, all in parallel ────
   #
