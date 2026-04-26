@@ -483,6 +483,27 @@ class ESClient:
             log.error("ES all_tags error: %s", e)
             return []
 
+    # ── Meta (cursor / config storage) ────────────────────────────────────────
+
+    def get_meta(self, key: str) -> Optional[dict]:
+        """Retrieve a named metadata document (not a game doc)."""
+        if not self._available:
+            return None
+        try:
+            resp = self._es.get(index=INDEX_NAME, id=f"_meta_{key}")
+            return resp["_source"]
+        except Exception:
+            return None
+
+    def set_meta(self, key: str, value: dict):
+        """Persist a named metadata document."""
+        if not self._available:
+            return
+        try:
+            self._es.index(index=INDEX_NAME, id=f"_meta_{key}", document=value)
+        except Exception as e:
+            log.error("ES set_meta error for key '%s': %s", key, e)
+
     # ── Write ──────────────────────────────────────────────────────────────────
 
     def upsert(self, doc: dict):

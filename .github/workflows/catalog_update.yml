@@ -6,9 +6,52 @@ on:
   workflow_dispatch:        # Allow manual trigger from GitHub UI
 
 jobs:
-  update:
+  # ── Phase 1: add new Steam app IDs to the index ──────────────────────────────
+  refresh-app-list:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install elasticsearch requests
+
+      - name: Refresh Steam app list
+        env:
+          STEAMSCOUT_ES_HOST: https://steamscout-fa1ff8.es.us-east-1.aws.elastic.cloud
+          STEAMSCOUT_ES_API_KEY: ${{ secrets.STEAMSCOUT_ES_API_KEY }}
+        run: python scripts/update_catalog.py
+
+  # ── Phase 2: generate the list of SteamSpy pages to fetch ────────────────────
+  generate-pages:
+    runs-on: ubuntu-latest
+    outputs:
+      pages: ${{ steps.gen.outputs.pages }}
+    steps:
+      - id: gen
+        # SteamSpy has ~83 pages of 1000 games each; 100 is a safe upper bound.
+        # Pages beyond the actual count return empty data and exit cleanly.
+        run: echo "pages=$(python3 -c 'import json; print(json.dumps(list(range(100))))')" >> $GITHUB_OUTPUT
+
+  # ── Phase 3: update SteamSpy metadata — one job per page, all in parallel ────
+  #
+  # Each matrix job runs on its own GitHub-hosted runner with a unique IP address.
+  # SteamSpy allows one page per IP per session; each job makes exactly one
+  # request, so all ~83 pages complete successfully in a single workflow run
+  # (~2 minutes total) instead of waiting 83 days with a cursor approach.
+  refresh-steamspy:
+    needs: generate-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false   # one page failing should not cancel the others
+      max-parallel: 30
+      matrix:
+        page: ${{ fromJson(needs.generate-pages.outputs.pages) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -20,8 +63,9 @@ jobs:
       - name: Install dependencies
         run: pip install elasticsearch requests
 
-      - name: Run catalog update
+      - name: Update SteamSpy page ${{ matrix.page }}
         env:
           STEAMSCOUT_ES_HOST: https://steamscout-fa1ff8.es.us-east-1.aws.elastic.cloud
           STEAMSCOUT_ES_API_KEY: ${{ secrets.STEAMSCOUT_ES_API_KEY }}
+          STEAMSPY_PAGE: ${{ matrix.page }}
         run: python scripts/update_catalog.py
