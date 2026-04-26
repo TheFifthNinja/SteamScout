@@ -1,17 +1,17 @@
 """
 Daily catalog update — runs via GitHub Actions.
 
-Two phases, both requiring write access via STEAMSCOUT_ES_API_KEY:
+Two modes, selected by env var:
 
-Phase 1 — refresh_app_list:
-  Fetches the full Steam app list (~100 k entries) and bulk-creates any app IDs
-  not yet in the index.  Existing docs are untouched (create-only).
-  This is how brand-new Steam releases enter the index.
+  Default mode (no STEAMSPY_PAGE set):
+    Phase 1 — refresh_app_list: bulk-create new Steam app IDs not yet in the index.
+    Phase 2 — refresh_steamspy: advance the cursor by one page (fallback / local use).
 
-Phase 2 — refresh_steamspy:
-  Fetches genre/tag/popularity/rating data from SteamSpy (paginated, ~1 req/s).
-  Uses doc_as_upsert so games that just appeared in Phase 1 (or are new to
-  SteamSpy) get their metadata filled in, and existing docs are updated.
+  Matrix mode (STEAMSPY_PAGE=N):
+    Fetch exactly page N from SteamSpy and write it to ES.
+    Used by the GitHub Actions matrix job that runs all ~100 pages in parallel,
+    each on a separate runner with its own IP address, bypassing SteamSpy's
+    per-session rate limit.
 """
 
 import logging
@@ -36,9 +36,9 @@ STEAM_APPLIST_URLS = [
     "https://api.steampowered.com/ISteamApps/GetAppList/v0002/",
     "https://store.steampowered.com/api/applist/GetAppList/?include_games=1&include_dlc=0&include_software=0",
 ]
-STEAMSPY_PAGE_URL  = "https://steamspy.com/api.php?request=all&page={page}"
-_STEAMSPY_RETRIES  = 3
-_STEAMSPY_BACKOFF  = 5   # seconds; multiplied by attempt number
+STEAMSPY_PAGE_URL = "https://steamspy.com/api.php?request=all&page={page}"
+_STEAMSPY_RETRIES = 3
+_STEAMSPY_BACKOFF = 5  # seconds; multiplied by attempt number
 
 
 def main():
@@ -47,17 +47,102 @@ def main():
         log.error("Cannot connect to Elasticsearch. Check STEAMSCOUT_ES_API_KEY secret.")
         sys.exit(1)
 
-    log.info("Index currently has %d docs.", es.count())
-    refresh_app_list(es)
-    refresh_steamspy(es)
-    log.info("Update complete. Index now has %d docs.", es.count())
+    page_env = os.environ.get("STEAMSPY_PAGE")
+    if page_env is not None:
+        # Matrix mode: one specific page, no app-list refresh
+        try:
+            page = int(page_env)
+        except ValueError:
+            log.error("STEAMSPY_PAGE must be an integer, got: %r", page_env)
+            sys.exit(1)
+        refresh_steamspy_page(es, page)
+    else:
+        # Default mode: app list + cursor-based single SteamSpy page
+        log.info("Index currently has %d docs.", es.count())
+        refresh_app_list(es)
+        refresh_steamspy_cursor(es)
+        log.info("Update complete. Index now has %d docs.", es.count())
 
+
+# ── Shared helpers ─────────────────────────────────────────────────────────────
+
+def _fetch_steamspy_page(page: int) -> dict:
+    """Fetch one SteamSpy page, retrying on empty/invalid JSON."""
+    for attempt in range(_STEAMSPY_RETRIES):
+        try:
+            r = requests.get(STEAMSPY_PAGE_URL.format(page=page), timeout=30)
+            if not r.ok:
+                raise requests.HTTPError(response=r)
+            text = r.text.strip()
+            if not text:
+                raise ValueError("empty response body")
+            return r.json()
+        except Exception as e:
+            if attempt < _STEAMSPY_RETRIES - 1:
+                wait = _STEAMSPY_BACKOFF * (attempt + 1)
+                log.warning(
+                    "SteamSpy page %d attempt %d failed (%s) — retrying in %ds",
+                    page, attempt + 1, e, wait,
+                )
+                time.sleep(wait)
+            else:
+                raise
+
+
+def _build_docs(data: dict) -> list:
+    """Convert a raw SteamSpy page dict into ES upsert documents."""
+    docs = []
+    for app_id_str, info in data.items():
+        try:
+            app_id = int(app_id_str)
+        except (ValueError, TypeError):
+            continue
+
+        genre_str = info.get("genre") or ""
+        genres    = [g.strip() for g in genre_str.split(",") if g.strip()]
+        tags_raw  = info.get("tags") or {}
+        tags      = list(tags_raw.keys())[:20] if isinstance(tags_raw, dict) else []
+
+        owners_str = info.get("owners") or "0"
+        try:
+            popularity = int(owners_str.split("..")[0].strip().replace(",", ""))
+        except (ValueError, TypeError):
+            popularity = 0
+
+        pos    = info.get("positive") or 0
+        neg    = info.get("negative") or 0
+        rating = round(pos / (pos + neg) * 100) if (pos + neg) > 0 else 0
+
+        try:
+            price_cents = int(info.get("price") or 0)
+        except (ValueError, TypeError):
+            price_cents = 0
+        is_free   = price_cents == 0
+        price_usd = price_cents / 100.0
+
+        docs.append({
+            "app_id":              app_id,
+            "name":                info.get("name", ""),
+            "header_image":        f"https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg",
+            "genres":              genres,
+            "tags":                tags,
+            "developer":           info.get("developer", ""),
+            "publisher":           info.get("publisher", ""),
+            "popularity":          popularity,
+            "rating":              rating,
+            "is_free":             is_free,
+            "price_usd":           price_usd,
+            "requirements_cached": False,
+        })
+    return docs
+
+
+# ── Phase 1 ────────────────────────────────────────────────────────────────────
 
 def refresh_app_list(es):
     """
     Add any Steam apps not yet in the index.
     Uses bulk_create (create-only) so existing docs are never overwritten.
-    Tries multiple endpoint URLs in case Steam rotates them.
     """
     log.info("Fetching Steam app list...")
     apps = None
@@ -65,10 +150,7 @@ def refresh_app_list(es):
         try:
             r = requests.get(url, timeout=30)
             r.raise_for_status()
-            data = r.json()
-            # Both v2 and store endpoint share this structure; store endpoint
-            # wraps in {"applist":{"apps":[...]}} as well.
-            apps = data.get("applist", {}).get("apps", [])
+            apps = r.json().get("applist", {}).get("apps", [])
             if apps:
                 log.info("Steam app list fetched from %s", url)
                 break
@@ -93,117 +175,72 @@ def refresh_app_list(es):
         }
         for a in valid
     ]
-
     added = es.bulk_create(docs)
     log.info("App list refresh done: %d new apps added to index.", added)
 
 
-def _fetch_steamspy_page(page: int) -> dict:
+# ── Phase 2a — matrix mode (one page per runner) ───────────────────────────────
+
+def refresh_steamspy_page(es, page: int):
     """
-    Fetch one SteamSpy page, retrying on empty/invalid JSON responses.
-    Returns the parsed dict or raises on permanent failure.
+    Fetch exactly one SteamSpy page and write it to ES.
+    Called by each GitHub Actions matrix job.
     """
-    for attempt in range(_STEAMSPY_RETRIES):
-        try:
-            r = requests.get(STEAMSPY_PAGE_URL.format(page=page), timeout=30)
-            if not r.ok:
-                raise requests.HTTPError(response=r)
-            text = r.text.strip()
-            if not text:
-                raise ValueError("empty response body")
-            return r.json()
-        except Exception as e:
-            if attempt < _STEAMSPY_RETRIES - 1:
-                wait = _STEAMSPY_BACKOFF * (attempt + 1)
-                log.warning(
-                    "SteamSpy page %d attempt %d failed (%s) — retrying in %ds",
-                    page, attempt + 1, e, wait,
-                )
-                time.sleep(wait)
-            else:
-                raise
+    log.info("Matrix mode: fetching SteamSpy page %d...", page)
+    try:
+        data = _fetch_steamspy_page(page)
+    except Exception as e:
+        log.error("SteamSpy page %d failed: %s", page, e)
+        sys.exit(1)
+
+    if not data:
+        log.info("SteamSpy page %d: no data (page beyond last).", page)
+        return
+
+    docs = _build_docs(data)
+    if docs:
+        es.bulk_update_genres(docs)
+    log.info("SteamSpy page %d: %d apps updated.", page, len(docs))
 
 
-def refresh_steamspy(es):
+# ── Phase 2b — cursor mode (one page per run, fallback / local) ────────────────
+
+def refresh_steamspy_cursor(es):
     """
-    Upsert genre/tag/developer/popularity/rating fields from SteamSpy.
-    doc_as_upsert means new games (not yet in ES) are created, existing ones updated.
+    Fetch one SteamSpy page per run using a persistent cursor stored in ES.
+    Used as a fallback when the matrix workflow isn't available.
     """
-    log.info("Fetching SteamSpy genre/tag data...")
-    page  = 0
-    total = 0
+    cursor     = es.get_meta("steamspy_cursor") or {}
+    page       = cursor.get("next_page", 0)
+    total_seen = cursor.get("total_seen", 0)
+    log.info("Cursor mode: fetching SteamSpy page %d (%d apps seen so far)...", page, total_seen)
 
-    while True:
-        try:
-            data = _fetch_steamspy_page(page)
-        except Exception as e:
-            log.error("SteamSpy page %d failed after %d retries: %s", page, _STEAMSPY_RETRIES, e)
-            break
+    try:
+        data = _fetch_steamspy_page(page)
+    except Exception as e:
+        log.error("SteamSpy page %d failed after %d retries: %s — cursor unchanged.", page, _STEAMSPY_RETRIES, e)
+        return
 
-        if not data:
-            log.info("SteamSpy returned empty page %d — done.", page)
-            break
+    if not data:
+        log.info("SteamSpy page %d returned no data — resetting cursor to 0.", page)
+        es.set_meta("steamspy_cursor", {"next_page": 0, "total_seen": total_seen})
+        return
 
-        docs = []
-        for app_id_str, info in data.items():
-            try:
-                app_id = int(app_id_str)
-            except (ValueError, TypeError):
-                continue
+    docs = _build_docs(data)
+    if docs:
+        es.bulk_update_genres(docs)
 
-            genre_str = info.get("genre") or ""
-            genres    = [g.strip() for g in genre_str.split(",") if g.strip()]
-            tags_raw  = info.get("tags") or {}
-            tags      = list(tags_raw.keys())[:20] if isinstance(tags_raw, dict) else []
+    total_seen  += len(docs)
+    is_last_page = len(data) < 100
+    next_page    = 0 if is_last_page else page + 1
+    es.set_meta("steamspy_cursor", {"next_page": next_page, "total_seen": total_seen})
 
-            owners_str = info.get("owners") or "0"
-            try:
-                popularity = int(owners_str.split("..")[0].strip().replace(",", ""))
-            except (ValueError, TypeError):
-                popularity = 0
-
-            pos    = info.get("positive") or 0
-            neg    = info.get("negative") or 0
-            rating = round(pos / (pos + neg) * 100) if (pos + neg) > 0 else 0
-
-            try:
-                price_cents = int(info.get("price") or 0)
-            except (ValueError, TypeError):
-                price_cents = 0
-            is_free   = price_cents == 0
-            price_usd = price_cents / 100.0
-
-            docs.append({
-                "app_id":       app_id,
-                "name":         info.get("name", ""),
-                "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg",
-                "genres":       genres,
-                "tags":         tags,
-                "developer":    info.get("developer", ""),
-                "publisher":    info.get("publisher", ""),
-                "popularity":   popularity,
-                "rating":       rating,
-                "is_free":      is_free,
-                "price_usd":    price_usd,
-                # Only set requirements_cached=False on new docs (doc_as_upsert
-                # won't overwrite this field on existing docs via the "doc" path,
-                # but we include it so freshly created docs enter the enrich queue).
-                "requirements_cached": False,
-            })
-
-        if docs:
-            es.bulk_update_genres(docs)
-            total += len(docs)
-
-        log.info("SteamSpy page %d -> %d apps (running total: %d)", page, len(docs), total)
-        page += 1
-        time.sleep(1.2)
-
-        if len(data) < 100:
-            log.info("SteamSpy page %d had fewer than 100 entries — reached end.", page - 1)
-            break
-
-    log.info("SteamSpy refresh done: %d apps processed.", total)
+    log.info(
+        "SteamSpy page %d -> %d apps processed (cumulative: %d). Next run: page %d.",
+        page, len(docs), total_seen, next_page,
+    )
+    if is_last_page:
+        log.info("Reached last SteamSpy page — cursor reset to 0 for next cycle.")
 
 
 if __name__ == "__main__":
