@@ -612,6 +612,27 @@ html, body {
   letter-spacing: 0.6px; border: 1px solid rgba(255,255,255,0.15);
   text-transform: uppercase;
 }
+.unlisted-badge {
+  position: absolute; top: 4px; left: 4px;
+  background: rgba(120,20,20,0.88); color: var(--red); font-weight: 700;
+  font-size: 8px; padding: 2px 5px; border-radius: 3px;
+  letter-spacing: 0.6px; border: 1px solid rgba(248,113,113,0.35);
+  text-transform: uppercase;
+}
+.run-badge.unlisted { background: var(--red-bg); color: var(--red); }
+.cat-card.is-unlisted .cat-thumb  { filter: grayscale(60%) brightness(0.65); }
+.game-card.is-unlisted .game-thumb { filter: grayscale(60%) brightness(0.65); }
+.unlisted-result {
+  padding: 20px 16px; display: flex; flex-direction: column; align-items: center;
+  gap: 12px; text-align: center;
+}
+.unlisted-result img { width: 100%; max-width: 300px; border-radius: 6px; filter: grayscale(70%) brightness(0.5); }
+.unlisted-result-label {
+  font-size: calc(11px * var(--font-scale)); font-weight: 700; letter-spacing: 1px;
+  color: var(--red); text-transform: uppercase; padding: 4px 12px;
+  border: 1px solid var(--red); border-radius: 4px; background: var(--red-bg);
+}
+.unlisted-result-msg { font-size: calc(10px * var(--font-scale)); color: var(--dim); line-height: 1.5; }
 .cat-card-body { padding: 6px 7px 7px; display: flex; flex-direction: column; gap: 5px; }
 .cat-card-name {
   font-size: calc(9px * var(--font-scale)); font-weight: 700;
@@ -793,6 +814,171 @@ html, body {
 }
 .cat-load-more-btn:hover:not(:disabled) { background: var(--steam); border-color: var(--steam); color: var(--bright); }
 .cat-load-more-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Rating badge ─────────────────────────────────────────────────────── */
+.rating-badge {
+  display: inline-flex; align-items: center;
+  font-size: calc(8px * var(--font-scale)); font-weight: 700;
+  border-radius: 3px; padding: 1px 5px; flex-shrink: 0; letter-spacing: 0.3px;
+}
+.rating-badge.high { background: var(--green-bg); color: var(--green); }
+.rating-badge.mid  { background: var(--yellow-bg); color: var(--yellow); }
+.rating-badge.low  { background: var(--red-bg); color: var(--red); }
+
+/* ── Developer line ───────────────────────────────────────────────────── */
+.game-dev {
+  font-size: calc(9px * var(--font-scale)); color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px;
+}
+.cat-card-dev {
+  font-size: calc(8px * var(--font-scale)); color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -1px;
+}
+
+/* ── Highlight snippet ────────────────────────────────────────────────── */
+.hl-snippet {
+  font-size: calc(9px * var(--font-scale)); color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
+}
+.hl-snippet mark { background: none; color: var(--steam); font-weight: 700; }
+
+/* ── Autocomplete suggestions ─────────────────────────────────────────── */
+#search-suggestions { padding: 0 14px; flex-shrink: 0; }
+.suggestions-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  box-shadow: var(--shadow-md); margin-top: 2px;
+}
+.suggestion-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 10px; cursor: pointer;
+  transition: background 0.12s; border-bottom: 1px solid var(--border);
+}
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:hover { background: var(--surface2); }
+.suggestion-thumb {
+  width: 50px; height: 23px; object-fit: cover;
+  border-radius: 3px; flex-shrink: 0; background: var(--surface2);
+}
+.suggestion-name {
+  flex: 1; font-size: calc(11px * var(--font-scale)); color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.suggestion-genres {
+  font-size: calc(8px * var(--font-scale)); color: var(--dim);
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* ── Facet tag chips ──────────────────────────────────────────────────── */
+#search-facet-tags {
+  padding: 0 14px 4px; display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0;
+}
+.facet-chip {
+  padding: 2px 8px; border-radius: 20px;
+  background: var(--surface2); color: var(--dim); border: 1px solid var(--border);
+  font-size: calc(8px * var(--font-scale)); font-family: inherit;
+  white-space: nowrap; cursor: pointer; flex-shrink: 0; transition: all 0.15s;
+}
+.facet-chip:hover { color: var(--text); border-color: var(--steam); }
+.facet-chip.active {
+  background: rgba(27,156,255,0.12); color: var(--steam);
+  border-color: var(--steam); font-weight: 700;
+}
+
+/* ── Skeleton shimmer ─────────────────────────────────────────────────── */
+.skel {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 3px;
+}
+.skel-list-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; margin-bottom: 5px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.skel-thumb  { width: 80px; height: 37px; flex-shrink: 0; border-radius: 4px; }
+.skel-info   { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.skel-title  { height: 10px; width: 65%; }
+.skel-sub    { height: 8px;  width: 40%; }
+.skel-btn    { width: 52px; height: 26px; border-radius: 20px; flex-shrink: 0; }
+.skel-grid-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.skel-grid-thumb { width: 100%; aspect-ratio: 460/215; }
+.skel-grid-body  { padding: 6px 7px; display: flex; flex-direction: column; gap: 5px; }
+.skel-grid-name  { height: 9px; width: 72%; }
+.skel-grid-sub   { height: 8px; width: 40%; }
+
+/* ── Game result banner header ────────────────────────────────────────── */
+.result-header {
+  position: relative; margin-bottom: 7px;
+  border-radius: var(--radius-sm); overflow: hidden;
+}
+.result-header img {
+  width: 100%; display: block;
+  max-height: 88px; object-fit: cover; object-position: center top;
+}
+.result-header-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(0deg, rgba(15,15,19,0.88) 0%, transparent 55%);
+}
+.result-header-name {
+  position: absolute; bottom: 6px; left: 10px; right: 10px;
+  font-size: calc(13px * var(--font-scale)); font-weight: 700;
+  color: var(--bright); text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.3px;
+}
+
+/* ── FPS preset bars ──────────────────────────────────────────────────── */
+.fps-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.fps-label {
+  font-size: calc(9px * var(--font-scale)); color: var(--dim);
+  width: 50px; flex-shrink: 0; text-transform: capitalize;
+}
+.fps-bar-wrap {
+  flex: 1; height: 5px; background: var(--surface2);
+  border-radius: 3px; overflow: hidden;
+}
+.fps-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--blue), var(--green));
+  transition: width 0.6s ease;
+}
+.fps-value {
+  font-size: calc(9px * var(--font-scale)); color: var(--bright);
+  width: 72px; text-align: right; flex-shrink: 0; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Confidence bar (perf section) ───────────────────────────────────── */
+.conf-row { display: flex; align-items: center; gap: 8px; padding: 4px 0 3px; }
+.conf-label { font-size: calc(9px * var(--font-scale)); color: var(--dim); width: 70px; flex-shrink: 0; }
+.conf-bar-wrap { flex: 1; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+.conf-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+.conf-value { font-size: calc(9px * var(--font-scale)); font-weight: 700; width: 50px; text-align: right; flex-shrink: 0; }
+
+/* ── Result price chip ────────────────────────────────────────────────── */
+.result-price-chip {
+  display: inline-flex; align-items: center;
+  font-size: calc(10px * var(--font-scale)); font-weight: 700;
+  padding: 3px 10px; border-radius: 4px; letter-spacing: 0.4px;
+}
+.result-price-chip.free { background: var(--green-bg); color: var(--green); border: 1px solid rgba(74,222,128,0.2); }
+.result-price-chip.paid { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 28px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.empty-state-icon { font-size: 28px; }
+.empty-state-title {
+  font-size: calc(12px * var(--font-scale)); font-weight: 700; color: var(--text);
+}
+.empty-state-sub { font-size: calc(10px * var(--font-scale)); color: var(--dim); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -832,7 +1018,9 @@ html, body {
   <div class="search-controls">
     <input type="text" id="search-input" placeholder="Search any game on Steam..." autocomplete="off">
   </div>
+  <div id="search-suggestions"></div>
   <div id="search-status-line"></div>
+  <div id="search-facet-tags"></div>
   <div id="genre-chips-wrap"></div>
   <div id="search-body"></div>
 </div>
@@ -1006,9 +1194,29 @@ window.SS = {
 
     let html = "";
 
-    // View on Steam button (always shown when we have an app_id)
+    // Game banner header
     if (data.app_id) {
-      html += `<div style="text-align:right">
+      const bannerUrl = reqs.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${data.app_id}/header.jpg`;
+      html += `<div class="result-header">
+        <img src="${esc(bannerUrl)}" onerror="this.parentNode.style.display='none'" loading="lazy">
+        <div class="result-header-overlay"></div>
+        <div class="result-header-name">${esc(name)}</div>
+      </div>`;
+    }
+
+    // Price + View on Steam row
+    if (data.app_id) {
+      const isFree   = reqs.is_free;
+      const priceUsd = reqs.price_usd;
+      let priceChip  = "";
+      if (isFree) {
+        priceChip = `<span class="result-price-chip free">FREE TO PLAY</span>`;
+      } else if (priceUsd != null && priceUsd > 0) {
+        priceChip = `<span class="result-price-chip paid">$${Number(priceUsd).toFixed(2)}</span>`;
+      }
+      html += `<div style="display:flex;align-items:center;gap:8px;padding-bottom:5px">
+        ${priceChip}
+        <span style="flex:1"></span>
         <button class="steam-store-btn" id="btn-view-steam" data-appid="${data.app_id}">🛒 View on Steam</button>
       </div>`;
     }
@@ -1119,17 +1327,33 @@ function renderTab(compat) {
     html += '<div class="divider"></div>';
     html += '<div class="perf-section">';
     html += '<div class="perf-header">Estimated Performance</div>';
-    let meta = `Model: ${esc(perf.model||"Heuristic")}`;
-    if (perf.score != null) meta += `  |  Score: ${perf.score}`;
-    meta += `\nConfidence: ${(perf.confidence||"low").toUpperCase()}`;
-    if (perf.note) meta += `\n${esc(perf.note)}`;
-    html += `<div class="perf-meta">${meta}</div>`;
+
+    // Confidence bar
+    const confMap = {high: 3, medium: 2, low: 1};
+    const confVal = confMap[perf.confidence] || 1;
+    const confColor = confVal === 3 ? "var(--green)" : confVal === 2 ? "var(--yellow)" : "var(--dim)";
+    html += `<div class="conf-row">
+      <span class="conf-label">Confidence</span>
+      <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:${Math.round(confVal/3*100)}%;background:${confColor}"></div></div>
+      <span class="conf-value" style="color:${confColor}">${(perf.confidence||"low").toUpperCase()}</span>
+    </div>`;
+
+    if (perf.note) html += `<div class="perf-meta">${esc(perf.note)}</div>`;
+
+    // FPS preset bars
     const presets = perf.presets || {};
-    const lines = [];
+    const MAX_FPS = 144;
     for (const lv of ["low","medium","high"]) {
-      if (presets[lv]) lines.push(`${lv.charAt(0).toUpperCase()+lv.slice(1)} settings: ${esc(presets[lv])}`);
+      if (!presets[lv]) continue;
+      const m = presets[lv].match(/(\d+)[-–](\d+)/);
+      const mid = m ? (parseInt(m[1]) + parseInt(m[2])) / 2 : 30;
+      const pct = Math.min(mid / MAX_FPS * 100, 100).toFixed(1);
+      html += `<div class="fps-row">
+        <span class="fps-label">${lv.charAt(0).toUpperCase()+lv.slice(1)}</span>
+        <div class="fps-bar-wrap"><div class="fps-bar-fill" style="width:${pct}%"></div></div>
+        <span class="fps-value">${esc(presets[lv])}</span>
+      </div>`;
     }
-    if (lines.length) html += `<div class="perf-presets">${lines.join("\n")}</div>`;
     html += '</div>';
   }
 
@@ -1277,8 +1501,10 @@ const $searchBody      = document.getElementById("search-body");
 
 let _searchResults    = [];
 let _selectedGenres   = [];
+let _selectedTags     = [];
 let _genresLoaded     = false;
 let _searchDebounce   = null;
+let _suggestDebounce  = null;
 let _searchBusy       = false;
 
 /* ── Open / close ──────────────────────────────────────────────────── */
@@ -1292,6 +1518,7 @@ function openSearch() {
 
 function closeSearch() {
   $searchOverlay.classList.remove("open");
+  hideSuggestions();
 }
 
 document.getElementById("btn-search").onclick = () => openSearch();
@@ -1340,32 +1567,93 @@ function renderGenreChips(genres) {
 
 $searchInput.addEventListener("input", () => {
   clearTimeout(_searchDebounce);
+  clearTimeout(_suggestDebounce);
+  const q = $searchInput.value.trim();
+  if (q.length >= 2) {
+    _suggestDebounce = setTimeout(doSuggest, 140);
+  } else {
+    hideSuggestions();
+  }
   _searchDebounce = setTimeout(doSearch, 280);
 });
 
 $searchInput.addEventListener("keydown", e => {
-  if (e.key === "Escape") closeSearch();
+  if (e.key === "Escape") { hideSuggestions(); closeSearch(); }
+  if (e.key === "Enter")  { hideSuggestions(); clearTimeout(_searchDebounce); doSearch(); }
 });
+
+$searchInput.addEventListener("blur", () => {
+  setTimeout(hideSuggestions, 150);
+});
+
+/* ── Autocomplete ──────────────────────────────────────────────────────── */
+
+async function doSuggest() {
+  if (!window.pywebview) return;
+  const q = $searchInput.value.trim();
+  if (q.length < 2) { hideSuggestions(); return; }
+  try {
+    const suggestions = await window.pywebview.api.suggest_games(q);
+    renderSuggestions(suggestions || []);
+  } catch(e) { hideSuggestions(); }
+}
+
+function renderSuggestions(items) {
+  const $box = document.getElementById("search-suggestions");
+  if (!$box || !items.length) { hideSuggestions(); return; }
+  $box.innerHTML = `<div class="suggestions-box">${items.map(s => {
+    const img = s.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${s.app_id}/header.jpg`;
+    const genres = (s.genres || []).slice(0, 2).join(" · ");
+    return `<div class="suggestion-item" data-appid="${s.app_id}" data-name="${esc(s.name || "")}">
+      <img class="suggestion-thumb" src="${esc(img)}" onerror="this.style.display='none'" loading="lazy">
+      <span class="suggestion-name">${esc(s.name || "")}</span>
+      ${genres ? `<span class="suggestion-genres">${esc(genres)}</span>` : ""}
+    </div>`;
+  }).join("")}</div>`;
+  $box.querySelectorAll(".suggestion-item").forEach(item => {
+    item.addEventListener("mousedown", e => {
+      e.preventDefault();
+      $searchInput.value = item.dataset.name;
+      hideSuggestions();
+      clearTimeout(_searchDebounce);
+      doSearch();
+    });
+  });
+}
+
+function hideSuggestions() {
+  const $box = document.getElementById("search-suggestions");
+  if ($box) $box.innerHTML = "";
+}
+
+/* ── Search ────────────────────────────────────────────────────────────── */
 
 async function doSearch() {
   if (!window.pywebview) return;
   const query = $searchInput.value.trim();
+  hideSuggestions();
 
   _searchResults = [];
   $searchStatusLine.textContent = "Searching...";
   $searchStatusLine.style.color = "var(--steam)";
-  $searchBody.innerHTML = "";
+  $searchBody.innerHTML = _buildSearchSkeletons(6);
+  const $ft = document.getElementById("search-facet-tags");
+  if ($ft) $ft.innerHTML = "";
 
   try {
     const status = await window.pywebview.api.get_search_status();
     if (!status.es_available) { renderESUnavailable(); return; }
 
-    const results = await window.pywebview.api.search_games(query, _selectedGenres, [], 0);
-    _searchResults = results || [];
-    renderSearchResults(_searchResults);
+    const raw = await window.pywebview.api.search_games(query, _selectedGenres, _selectedTags, 0);
+    const results = Array.isArray(raw) ? raw : (raw.results || []);
+    const facets  = Array.isArray(raw) ? {} : (raw.facets  || {});
+    const total   = Array.isArray(raw) ? results.length : (raw.total || results.length);
+    _searchResults = results;
+    renderSearchResults(results, facets, total);
   } catch(e) {
     $searchStatusLine.textContent = "Search error — is Elasticsearch running?";
     $searchStatusLine.style.color = "var(--yellow)";
+    $searchBody.innerHTML = "";
   }
 }
 
@@ -1376,8 +1664,9 @@ async function _loadMoreSearch() {
   const btn = document.getElementById("search-load-more-btn");
   if (btn) { btn.textContent = "Loading..."; btn.disabled = true; }
   try {
-    const newResults = await window.pywebview.api.search_games(query, _selectedGenres, [], offset);
-    if (!newResults || !newResults.length) {
+    const raw = await window.pywebview.api.search_games(query, _selectedGenres, _selectedTags, offset);
+    const newResults = Array.isArray(raw) ? raw : (raw.results || []);
+    if (!newResults.length) {
       const row = document.getElementById("search-load-more-row");
       if (row) row.remove();
       return;
@@ -1421,20 +1710,38 @@ function _wireSearchCards(root) {
 }
 
 function _buildSearchCard(g, i) {
+  const isUnlisted = g.app_type === "unavailable";
   const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
   const min = myStatus.overall_min;
-  let badge = "";
-  if (min === "pass")       badge = `<span class="run-badge pass">✓ CAN RUN</span>`;
-  else if (min === "fail")  badge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
-  else                      badge = `<span class="run-badge unknown">? UNCHECKED</span>`;
-  const genres = (g.genres || []).slice(0, 3).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
+  let statusBadge = "";
+  if (isUnlisted)          statusBadge = `<span class="run-badge unlisted">UNLISTED</span>`;
+  else if (min === "pass") statusBadge = `<span class="run-badge pass">✓ CAN RUN</span>`;
+  else if (min === "fail") statusBadge = `<span class="run-badge fail">✗ MAY NOT RUN</span>`;
+
+  const r = g.rating;
+  const ratingBadge = (r != null && r > 0)
+    ? `<span class="rating-badge ${r >= 80 ? "high" : r >= 60 ? "mid" : "low"}">★ ${r}%</span>`
+    : "";
+
+  const genres = (g.genres || []).slice(0, 2).map(gr => `<span class="genre-tag">${esc(gr)}</span>`).join("");
   const imgSrc = g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.app_id}/header.jpg`;
-  const thumb  = `<img class="game-thumb" src="${esc(imgSrc)}" loading="lazy" onerror="catImgFallback(this)">`;
-  return `<div class="game-card" data-appid="${g.app_id}" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
+  const thumb  = `<img class="game-thumb${isUnlisted ? " is-unlisted" : ""}" src="${esc(imgSrc)}" loading="lazy" onerror="catImgFallback(this)">`;
+
+  const hl = g._highlight || {};
+  const nameHtml = hl.name ? hl.name : esc(g.name || "Unknown Game");
+  const devHtml  = g.developer ? `<div class="game-dev">${esc(g.developer)}</div>` : "";
+  const snippet  = hl.snippet || "";
+  const snippetHtml = snippet
+    ? `<div class="hl-snippet">${snippet.replace(/<(?!\/?(mark))[^>]+>/gi, "").slice(0, 120)}</div>`
+    : "";
+
+  return `<div class="game-card${isUnlisted ? " is-unlisted" : ""}" data-appid="${g.app_id}" data-idx="${i}" style="animation-delay:${Math.min(i * 0.025, 0.3)}s">
     ${thumb}
     <div class="game-card-info">
-      <div class="game-card-name">${esc(g.name || "Unknown Game")}</div>
-      <div class="game-card-meta">${genres} ${badge}</div>
+      <div class="game-card-name">${nameHtml}</div>
+      ${devHtml}
+      <div class="game-card-meta">${genres} ${ratingBadge} ${statusBadge}</div>
+      ${snippetHtml}
     </div>
     <button class="check-game-btn" data-appid="${g.app_id}">CHECK</button>
   </div>`;
@@ -1445,6 +1752,23 @@ function _appendSearchResults(results, startIdx) {
   _wireSearchCards($searchBody);
 }
 
+/* ── Skeleton builders ─────────────────────────────────────────────── */
+
+function _buildSearchSkeletons(n) {
+  return Array.from({length: n}, () => `<div class="skel-list-item">
+    <div class="skel skel-thumb"></div>
+    <div class="skel-info"><div class="skel skel-title"></div><div class="skel skel-sub"></div></div>
+    <div class="skel skel-btn"></div>
+  </div>`).join("");
+}
+
+function _buildCatSkeletons(n) {
+  return Array.from({length: n}, (_, i) => `<div class="skel-grid-card" style="animation-delay:${i * 0.03}s">
+    <div class="skel skel-grid-thumb"></div>
+    <div class="skel-grid-body"><div class="skel skel-grid-name"></div><div class="skel skel-grid-sub"></div></div>
+  </div>`).join("");
+}
+
 /* ── Results rendering ─────────────────────────────────────────────── */
 
 function renderSearchIdle() {
@@ -1453,19 +1777,43 @@ function renderSearchIdle() {
   $searchBody.innerHTML = "";
 }
 
-function renderSearchResults(results) {
+function renderSearchResults(results, facets, total) {
   const n = results.length;
   $searchStatusLine.style.color = "var(--dim)";
 
   if (!n) {
-    $searchStatusLine.textContent = "No results found.";
-    $searchBody.innerHTML = `<div style="text-align:center;padding:20px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games matched your search.</div>`;
+    $searchStatusLine.textContent = "No results.";
+    $searchBody.innerHTML = `<div class="empty-state">
+      <div class="empty-state-icon">🔍</div>
+      <div class="empty-state-title">No games found</div>
+      <div class="empty-state-sub">Try different keywords or remove active filters</div>
+    </div>`;
     return;
   }
 
-  const genreStatus = window._catalogStatus || {};
-  const enriched = genreStatus.enriched || 0;
-  $searchStatusLine.textContent = `${n} result${n !== 1 ? "s" : ""}${enriched ? "  ·  " + enriched.toLocaleString() + " games pre-checked" : ""}`;
+  const shown = (total && total > n) ? `${n} of ${total.toLocaleString()} results` : `${n} result${n !== 1 ? "s" : ""}`;
+  $searchStatusLine.textContent = shown;
+
+  // Facet tag chips from result set
+  const $ft = document.getElementById("search-facet-tags");
+  if ($ft && facets && facets.tags && facets.tags.length) {
+    $ft.innerHTML = facets.tags.map(t => {
+      const active = _selectedTags.includes(t.key);
+      return `<button class="facet-chip${active ? " active" : ""}" data-tag="${esc(t.key)}">${esc(t.key)}</button>`;
+    }).join("");
+    $ft.querySelectorAll(".facet-chip").forEach(c => {
+      c.onclick = () => {
+        const tag = c.dataset.tag;
+        if (_selectedTags.includes(tag)) {
+          _selectedTags = _selectedTags.filter(x => x !== tag);
+        } else {
+          _selectedTags.push(tag);
+        }
+        c.classList.toggle("active", _selectedTags.includes(tag));
+        doSearch();
+      };
+    });
+  }
 
   $searchBody.innerHTML = results.map((g, i) => _buildSearchCard(g, i)).join("");
   _wireSearchCards($searchBody);
@@ -1492,9 +1840,16 @@ async function runSearchCheck(appId, btn) {
     const result = await window.pywebview.api.check_game(appId);
     if (result) {
       if (result.unlisted) {
-        $status.textContent = `⚠  This game's store page is not publicly available on Steam.`;
+        $status.textContent = `⚠  Unavailable on Steam.`;
         $status.style.color = "var(--yellow)";
         $status.classList.remove("waiting");
+        const imgUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${result.app_id}/header.jpg`;
+        $content.innerHTML = `<div class="unlisted-result">
+          <img src="${imgUrl}" alt="${result.name}" onerror="this.style.display='none'">
+          <div class="unlisted-result-label">Unavailable on Steam</div>
+          <div style="font-size:calc(12px * var(--font-scale));font-weight:600;color:var(--text)">${result.name}</div>
+          <div class="unlisted-result-msg">This game's store page is no longer publicly available.<br>Compatibility cannot be checked.</div>
+        </div>`;
       } else {
         if (result.compat) _userGameStatus[appId] = result.compat;
         delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste
@@ -1659,12 +2014,12 @@ async function loadCatSection(section) {
   if (!window.pywebview) return;
   _catSection = section;
   _setCatLoadMore(false);
-  $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">Loading...</div>`;
+  $catGrid.innerHTML = _buildCatSkeletons(12);
   try {
     const games = await window.pywebview.api.get_catalogue(section, _catCountry, _catSort, _catMinRating, _catPriceFilter, 0);
     _catData[section] = games || [];
     if (!games || !games.length) {
-      $catGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--dim);font-size:calc(11px * var(--font-scale))">No games found for this filter.</div>`;
+      $catGrid.innerHTML = `<div style="grid-column:1/-1"><div class="empty-state"><div class="empty-state-icon">🎮</div><div class="empty-state-title">No games found</div><div class="empty-state-sub">Try a different genre, sort, or price filter</div></div></div>`;
       return;
     }
     renderCatCards(games);
@@ -1842,13 +2197,15 @@ function isDLC(g) {
 }
 
 function _buildCatCard(g, i) {
+  const isUnlisted = g.app_type === "unavailable";
   const hasDiscount = (g.discount_percent || 0) > 0;
   const imgUrl  = g.header_image || catImgUrl(g.app_id);
   const thumb   = `<img class="cat-thumb" src="${esc(imgUrl)}" onerror="catImgFallback(this)">`;
   const discBadge = hasDiscount ? `<div class="cat-discount-badge">-${g.discount_percent}%</div>` : "";
-  const typeLabel = isDLC(g) ? "DLC" : "GAME";
-  const typeColor = isDLC(g) ? "rgba(0,0,0,0.75)" : "rgba(30,90,160,0.85)";
-  const dlcBadge  = `<div class="cat-dlc-badge" style="background:${typeColor}">${typeLabel}</div>`;
+  const dlcBadge  = isUnlisted
+    ? `<div class="unlisted-badge">UNLISTED</div>`
+    : `<div class="cat-dlc-badge" style="background:${isDLC(g) ? "rgba(0,0,0,0.75)" : "rgba(30,90,160,0.85)"}">${isDLC(g) ? "DLC" : "GAME"}</div>`;
+
   let priceHtml = "";
   if (g.is_free) {
     priceHtml = `<span class="cat-price free">FREE</span>`;
@@ -1857,18 +2214,30 @@ function _buildCatCard(g, i) {
               + `<span class="cat-price discounted">${fmtCatPrice(g.final_price)}</span>`;
   } else if (g.final_price) {
     priceHtml = `<span class="cat-price full">${fmtCatPrice(g.final_price)}</span>`;
+  } else if (g.price_usd != null && g.price_usd > 0) {
+    priceHtml = `<span class="cat-price full">$${g.price_usd.toFixed(2)}</span>`;
   }
+
+  const r = g.rating;
+  const ratingBadge = (r != null && r > 0)
+    ? `<span class="rating-badge ${r >= 80 ? "high" : r >= 60 ? "mid" : "low"}" style="font-size:7px;padding:1px 4px">★ ${r}%</span>`
+    : "";
+
   const myStatus = _userGameStatus[g.app_id] || _userGameStatus[String(g.app_id)] || {};
   const min = myStatus.overall_min;
   const runBadge = min === "pass" ? `<span class="run-badge pass" style="font-size:8px;padding:1px 4px">✓</span>`
                  : min === "fail" ? `<span class="run-badge fail" style="font-size:8px;padding:1px 4px">✗</span>` : "";
   const gameName = esc(g.name || "Unknown");
-  return `<div class="cat-card" data-appid="${g.app_id}" title="${gameName}" style="animation-delay:${Math.min(i*0.02,0.4)}s">
+  const devHtml  = g.developer ? `<div class="cat-card-dev">${esc(g.developer)}</div>` : "";
+
+  return `<div class="cat-card${isUnlisted ? " is-unlisted" : ""}" data-appid="${g.app_id}" title="${gameName}" style="animation-delay:${Math.min(i*0.02,0.4)}s">
     <div class="cat-thumb-wrap">${thumb}${discBadge}${dlcBadge}</div>
     <div class="cat-card-body">
       <div class="cat-card-name">${gameName}</div>
+      ${devHtml}
       <div class="cat-card-footer">
         <span class="cat-price-wrap">${priceHtml}</span>
+        ${ratingBadge}
         ${runBadge}
         <button class="check-game-btn cat-check" data-appid="${g.app_id}">CHECK</button>
       </div>
@@ -1957,9 +2326,16 @@ async function runCatCheck(appId, btn) {
     const result = await window.pywebview.api.check_game(appId);
     if (result) {
       if (result.unlisted) {
-        $status.textContent = `⚠  This game's store page is not publicly available on Steam.`;
+        $status.textContent = `⚠  Unavailable on Steam.`;
         $status.style.color = "var(--yellow)";
         $status.classList.remove("waiting");
+        const imgUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${result.app_id}/header.jpg`;
+        $content.innerHTML = `<div class="unlisted-result">
+          <img src="${imgUrl}" alt="${result.name}" onerror="this.style.display='none'">
+          <div class="unlisted-result-label">Unavailable on Steam</div>
+          <div style="font-size:calc(12px * var(--font-scale));font-weight:600;color:var(--text)">${result.name}</div>
+          <div class="unlisted-result-msg">This game's store page is no longer publicly available.<br>Compatibility cannot be checked.</div>
+        </div>`;
       } else {
         if (result.compat) _userGameStatus[appId] = result.compat;
         delete _catData["recommended"];  // Invalidate so next "For You" open reflects new taste

@@ -345,11 +345,18 @@ class Api:
     # ── Search API (called async from JS via pywebview bridge) ────────────────
 
     def search_games(self, query, genres=None, tags=None, offset=0):
-        """Full-text search across name, tags, developer, publisher."""
+        """Full-text search. Returns {results, facets, total} dict."""
+        _init_search()
+        if _search_service is None:
+            return {"results": [], "facets": {}, "total": 0}
+        return _search_service.search(query=query or "", genres=genres or [], tags=tags or [], offset=int(offset or 0))
+
+    def suggest_games(self, prefix):
+        """Autocomplete name suggestions for the search input."""
         _init_search()
         if _search_service is None:
             return []
-        return _search_service.search(query=query or "", genres=genres or [], tags=tags or [], offset=int(offset or 0))
+        return _search_service.suggest(str(prefix or "").strip())
 
     def check_game(self, app_id):
         """Fetch + run compat check for a specific app_id. May take ~2-5s."""

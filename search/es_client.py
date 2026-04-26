@@ -84,15 +84,23 @@ def _build_es():
         return None
 
 
+def _is_auth_error(e: Exception) -> bool:
+    """True for 403 / unauthorized responses — expected when using the read-only key."""
+    s = str(e)
+    return "403" in s or "unauthorized" in s.lower() or "AuthorizationException" in type(e).__name__
+
+
 class ESClient:
     """
     Thin wrapper around the elasticsearch-py client.
     All public methods fail silently and return empty/None when ES is unavailable.
+    Write methods are additionally skipped when the API key is read-only (403).
     """
 
     def __init__(self):
         self._es = _build_es()
         self._available = self._es is not None
+        self._writable   = True   # flipped to False on first 403 write response
         if self._available:
             self._ensure_index()
 
@@ -160,6 +168,11 @@ class ESClient:
             if tags:
                 filters.append({"terms": {"tags": tags}})
 
+            must_not = [{"terms": {"app_type": [
+                "dlc", "demo", "mod", "music", "soundtrack", "video", "advertising",
+                "unavailable",
+            ]}}]
+
             q = (query or "").strip()
 
             if q:
@@ -168,7 +181,8 @@ class ESClient:
                     base_query = {
                         "bool": {
                             "must": [{"match_phrase_prefix": {"name": q}}],
-                            "filter": filters,
+                            "filter":   filters,
+                            "must_not": must_not,
                         }
                     }
                 else:
@@ -207,11 +221,12 @@ class ESClient:
                                 # Soft boost: games with cached requirements → CHECK is instant
                                 {"term": {"requirements_cached": True}},
                             ],
-                            "filter": filters,
+                            "filter":   filters,
+                            "must_not": must_not,
                         }
                     }
             else:
-                base_query = {"bool": {"must": [{"match_all": {}}], "filter": filters}}
+                base_query = {"bool": {"must": [{"match_all": {}}], "filter": filters, "must_not": must_not}}
 
             resp = self._es.search(
                 index=INDEX_NAME,
@@ -243,15 +258,45 @@ class ESClient:
                         "boost_mode": "sum",
                     }
                 },
+                highlight={
+                    "fields": {
+                        "name":              {"number_of_fragments": 1, "fragment_size": 100},
+                        "short_description": {"number_of_fragments": 1, "fragment_size": 150},
+                    },
+                    "pre_tags":  ["<mark>"],
+                    "post_tags": ["</mark>"],
+                },
+                aggs={
+                    "tags": {"terms": {"field": "tags", "size": 15}},
+                },
                 size=size,
                 from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "short_description",
                     "header_image", "developer", "is_free", "app_type",
-                    "requirements_cached", "compat_cache",
+                    "requirements_cached", "compat_cache", "rating", "popularity",
                 ],
             )
-            return [h["_source"] for h in resp["hits"]["hits"]]
+            results = []
+            for h in resp["hits"]["hits"]:
+                src = dict(h["_source"])
+                hl = h.get("highlight", {})
+                if hl:
+                    src["_highlight"] = {
+                        "name":    (hl.get("name")              or [None])[0],
+                        "snippet": (hl.get("short_description") or [None])[0],
+                    }
+                results.append(src)
+            facets = {
+                k: [{"key": b["key"], "count": b["doc_count"]}
+                    for b in v.get("buckets", [])]
+                for k, v in resp.get("aggregations", {}).items()
+            }
+            return {
+                "results": results,
+                "facets":  facets,
+                "total":   resp["hits"]["total"]["value"],
+            }
         except Exception as e:
             log.error("ES search error: %s", e)
             return []
@@ -298,6 +343,7 @@ class ESClient:
             must_not = [
                 {"terms": {"app_type": [
                     "dlc", "demo", "mod", "music", "soundtrack", "video", "advertising",
+                    "unavailable",
                 ]}},
             ]
             filters = []
@@ -359,7 +405,7 @@ class ESClient:
                 from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "header_image",
-                    "developer", "app_type", "is_free", "popularity", "rating",
+                    "developer", "app_type", "is_free", "price_usd", "popularity", "rating",
                     "requirements_cached", "compat_cache",
                 ],
             )
@@ -402,6 +448,7 @@ class ESClient:
             must_not = [
                 {"terms": {"app_type": [
                     "dlc", "demo", "mod", "music", "soundtrack", "video",
+                    "unavailable",
                 ]}},
             ]
             if exclude_ids:
@@ -441,7 +488,7 @@ class ESClient:
                 from_=offset,
                 source=[
                     "app_id", "name", "genres", "tags", "header_image",
-                    "developer", "app_type", "is_free", "popularity", "rating",
+                    "developer", "app_type", "is_free", "price_usd", "popularity", "rating",
                     "requirements_cached", "compat_cache",
                 ],
             )
@@ -483,6 +530,36 @@ class ESClient:
             log.error("ES all_tags error: %s", e)
             return []
 
+    def suggest_names(self, prefix: str, size: int = 6) -> list:
+        """Fast name-prefix lookup for search autocomplete. Returns app_id, name, header_image, genres."""
+        if not self._available or not (prefix or "").strip():
+            return []
+        try:
+            resp = self._es.search(
+                index=INDEX_NAME,
+                query={
+                    "bool": {
+                        "must": [{"match_phrase_prefix": {
+                            "name": {"query": prefix.strip(), "max_expansions": 30}
+                        }}],
+                        "must_not": [{"terms": {"app_type": [
+                            "dlc", "demo", "mod", "music", "soundtrack",
+                            "video", "advertising", "unavailable",
+                        ]}}],
+                    }
+                },
+                sort=[
+                    {"_score": "desc"},
+                    {"popularity": {"order": "desc", "missing": "_last", "unmapped_type": "integer"}},
+                ],
+                size=size,
+                source=["app_id", "name", "header_image", "genres"],
+            )
+            return [h["_source"] for h in resp["hits"]["hits"]]
+        except Exception as e:
+            log.error("ES suggest_names error: %s", e)
+            return []
+
     # ── Meta (cursor / config storage) ────────────────────────────────────────
 
     def get_meta(self, key: str) -> Optional[dict]:
@@ -497,23 +574,31 @@ class ESClient:
 
     def set_meta(self, key: str, value: dict):
         """Persist a named metadata document."""
-        if not self._available:
+        if not self._available or not self._writable:
             return
         try:
             self._es.index(index=INDEX_NAME, id=f"_meta_{key}", document=value)
         except Exception as e:
-            log.error("ES set_meta error for key '%s': %s", key, e)
+            if _is_auth_error(e):
+                log.debug("ES set_meta blocked (read-only key).")
+                self._writable = False
+            else:
+                log.error("ES set_meta error for key '%s': %s", key, e)
 
     # ── Write ──────────────────────────────────────────────────────────────────
 
     def upsert(self, doc: dict):
-        if not self._available:
+        if not self._available or not self._writable:
             return
         try:
             app_id = str(doc.get("app_id", ""))
             self._es.index(index=INDEX_NAME, id=app_id, document=doc)
         except Exception as e:
-            log.error("ES upsert error for app %s: %s", doc.get("app_id"), e)
+            if _is_auth_error(e):
+                log.debug("ES write blocked (read-only key) — compat cache not persisted.")
+                self._writable = False
+            else:
+                log.error("ES upsert error for app %s: %s", doc.get("app_id"), e)
 
     def bulk_upsert(self, docs: list) -> int:
         """Bulk-index a list of game dicts. Returns count of successful docs."""

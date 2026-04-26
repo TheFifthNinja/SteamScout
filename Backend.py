@@ -1430,6 +1430,8 @@ async def watcher_loop():
 
         await asyncio.sleep(1.5)
       except Exception as e:
+        if isinstance(e, RuntimeError) and "shutdown" in str(e):
+            return
         log.error("Watcher loop error (recovering): %s", e, exc_info=True)
         await asyncio.sleep(3)
 
